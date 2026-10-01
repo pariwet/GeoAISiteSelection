@@ -1,0 +1,9 @@
+streamlit>=1.38
+pandas
+numpy
+plotly
+requests
+geopandas
+rasterio
+shapely
+pyproj
