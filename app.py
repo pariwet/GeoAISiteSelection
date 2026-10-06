@@ -1,457 +1,285 @@
+from __future__ import annotations
+
 import os
 import time
+from typing import Any
+
 import numpy as np
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-from openai import OpenAI
 
-# ==========================================
-# 1. PAGE CONFIGURATION & STYLING (Kahoot Style)
-# ==========================================
-st.set_page_config(
-    page_title="AI Site Selection Challenge",
-    page_icon="🌊",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+try:
+    from openai import OpenAI
+except ImportError:  # pragma: no cover
+    OpenAI = None
+
+try:
+    from streamlit_autorefresh import st_autorefresh
+except ImportError:  # pragma: no cover
+    st_autorefresh = None
+
+st.set_page_config(page_title="AI Site Selection Challenge", page_icon="🌍", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown(
     """
-    <style>
-    .main-title {
-        font-size: 2.5rem;
-        font-weight: 800;
-        color: #4A90E2;
-        text-align: center;
-        margin-bottom: 0px;
-    }
-    .sub-title {
-        font-size: 1.2rem;
-        text-align: center;
-        color: #7B889B;
-        margin-bottom: 20px;
-    }
-    .score-card {
-        background-color: #1E293B;
-        border-radius: 10px;
-        padding: 15px;
-        text-align: center;
-        border: 2px solid #334155;
-    }
-    .metric-value {
-        font-size: 2rem;
-        font-weight: 700;
-        color: #38BDF8;
-    }
-    </style>
-""",
-    unsafe_allow_html=True,
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+:root { --ink:#ecf4ff; --muted:#8fa8c2; --bg:#07111f; --panel:#0d1d31; --line:#203b59; --cyan:#56e0e7; --lime:#c9f56a; --coral:#ff7c6b; }
+html, body, [class*="css"] { font-family:'Space Grotesk',sans-serif; }
+.stApp { background:radial-gradient(circle at 90% 0%, #123252 0%, var(--bg) 40%); color:var(--ink); }
+.block-container { padding-top:1.7rem; max-width:1500px; padding-bottom:6rem; }
+[data-testid="stSidebar"] { background:#091827; border-right:1px solid var(--line); }
+[data-testid="stMetric"] { background:rgba(13,29,49,.86); border:1px solid var(--line); border-radius:14px; padding:14px; }
+[data-testid="stMetricLabel"] { color:var(--muted); }
+[data-testid="stMetricValue"] { color:var(--ink); }
+.kicker { color:var(--cyan); font-family:'DM Mono',monospace; font-size:.76rem; letter-spacing:.12em; text-transform:uppercase; }
+.hero { font-size:2.55rem; font-weight:700; line-height:1.03; margin:.25rem 0 .65rem; }
+.subtle { color:var(--muted); }
+.challenge-card { background:linear-gradient(135deg,rgba(16,42,67,.94),rgba(9,24,40,.94)); border:1px solid var(--line); border-radius:18px; padding:22px; box-shadow:0 18px 50px rgba(0,0,0,.18); }
+.badge { display:inline-block; padding:5px 10px; border-radius:999px; background:#183653; color:var(--cyan); font-size:.78rem; font-weight:600; }
+.score-pill { font-family:'DM Mono',monospace; color:var(--lime); font-size:1.15rem; }
+.small-note { color:var(--muted); font-size:.82rem; }
+.factor-title { color:var(--cyan); font-weight:600; margin-bottom:0; }
+</style>
+""", unsafe_allow_html=True,
 )
 
-# Initialize Session State Variables
-if "team_name" not in st.session_state:
-    st.session_state.team_name = "Team Explorer"
-if "m1_score" not in st.session_state:
-    st.session_state.m1_score = 0.0
-if "m2_score" not in st.session_state:
-    st.session_state.m2_score = 0.0
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-if "start_time" not in st.session_state:
-    st.session_state.start_time = time.time()
+# Five flood factors for the site-selection challenge.
+FACTORS = ["Slope", "Elevation", "Rainfall", "Distance to river", "Drainage capacity"]
+DEFAULT_WEIGHTS = {factor: 0 for factor in FACTORS}
+BENCHMARK_WEIGHTS = {"Slope": 18, "Elevation": 24, "Rainfall": 28, "Distance to river": 18, "Drainage capacity": 12}
 
-# ==========================================
-# 2. SYNTHETIC SPATIAL DATA GENERATION (50x50 Grid)
-# ==========================================
-@st.cache_data
-def generate_spatial_data():
-    grid_size = 50
-    x = np.linspace(0, 49, grid_size)
-    y = np.linspace(0, 49, grid_size)
-    X, Y = np.meshgrid(x, y)
 
-    # Elevation (m): High on left/top, low in center valley
-    Elevation = 150 - (
-        np.sqrt((X - 25) ** 2 + (Y - 25) ** 2) * 2.5 + np.sin(X / 5) * 10
-    )
-    Elevation = np.clip(Elevation, 10, 200)
+def init_state() -> None:
+    defaults: dict[str, Any] = {
+        "weights": DEFAULT_WEIGHTS.copy(),
+        "mission1_score": 0,
+        "mission2_score": 0,
+        "selected_sites": [],
+        "chat": [],
+        "team_name": "",
+        "teams": [],
+        "team_scores": {},
+        "map_generated": False,
+        "timer_started": time.monotonic(),
+        "nav": "Challenge",
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+    # If the app is hot-reloaded after a factor-set change, start the new round cleanly.
+    if set(st.session_state.get("weights", {}).keys()) != set(FACTORS):
+        st.session_state.weights = DEFAULT_WEIGHTS.copy()
+        st.session_state.map_generated = False
+        st.session_state.selected_sites = []
+        st.session_state.mission1_score = 0
+        st.session_state.mission2_score = 0
 
-    # Slope (%): Gradient of elevation
-    dy, dx = np.gradient(Elevation)
-    Slope = np.sqrt(dx**2 + dy**2) * 2
 
-    # Rainfall (mm): High rainfall gradient towards top-right
-    Rainfall = 150 + X * 2 + Y * 3 + np.random.normal(0, 5, (grid_size, grid_size))
-
-    # River Path: Bisecting diagonally
-    River_Dist = np.abs(Y - (0.8 * X + 5))
-
-    # Road Network: Two intersecting main corridors
-    Road_Dist = np.minimum(np.abs(X - 20), np.abs(Y - 30))
-
-    # Building Density (0 to 1)
-    Building = np.exp(-((X - 30) ** 2 + (Y - 20) ** 2) / 200) + np.exp(
-        -((X - 10) ** 2 + (Y - 40) ** 2) / 150
-    )
-    Building = np.clip(Building, 0, 1)
-
-    # Hospital Location at Grid (35, 35)
-    Hospital_X, Hospital_Y = 35, 35
-    Hospital_Dist = np.sqrt((X - Hospital_X) ** 2 + (Y - Hospital_Y) ** 2)
-
+def make_data(n: int = 12) -> dict[str, np.ndarray]:
+    rng = np.random.default_rng(42)
+    y, x = np.mgrid[0:n, 0:n]
+    elevation = 35 + .9*x + 1.5*y + 11*np.exp(-((x-8)**2+(y-3)**2)/18) + rng.normal(0, 1.5, (n,n))
+    slope_raw = np.hypot(np.gradient(elevation, axis=0), np.gradient(elevation, axis=1))
+    rainfall = 125 + .8*y + 24*np.exp(-((x-3)**2+(y-9)**2)/25) + rng.normal(0, 3, (n,n))
+    river_distance = np.abs(y - (2.3 + .34*x + 1.0*np.sin(x/2))) + .2
+    def norm(a: np.ndarray) -> np.ndarray:
+        return (a - a.min()) / (a.max() - a.min())
+    elevation_n, slope_n = norm(elevation), norm(slope_raw)
+    drainage_capacity = np.clip(.65*elevation_n + .35*(1-slope_n), 0, 1)
     return {
-        "X": X,
-        "Y": Y,
-        "Elevation": Elevation,
-        "Slope": Slope,
-        "Rainfall": Rainfall,
-        "River_Dist": River_Dist,
-        "Road_Dist": Road_Dist,
-        "Building": Building,
-        "Hospital_Dist": Hospital_Dist,
-        "Hospital_Pos": (Hospital_X, Hospital_Y),
+        "x": x, "y": y, "slope": slope_n, "elevation": 1-elevation_n,
+        "rainfall": norm(rainfall), "distance_to_river": norm(river_distance),
+        "drainage_capacity": 1-drainage_capacity,
+        "elevation_m": elevation,
     }
 
 
-data = generate_spatial_data()
+DATA = make_data()
+LAYER_KEYS = {"Slope":"slope", "Elevation":"elevation", "Rainfall":"rainfall", "Distance to river":"distance_to_river", "Drainage capacity":"drainage_capacity"}
 
-# Optimal Expert Weights for Benchmark
-OPTIMAL_WEIGHTS = {
-    "Elevation": 25,
-    "Slope": 15,
-    "Rainfall": 20,
-    "River_Dist": 20,
-    "Road_Dist": 5,
-    "Building": 10,
-    "Hospital_Dist": 5,
-}
 
-# ==========================================
-# 3. SIDEBAR: GAME DASHBOARD & LEADERBOARD
-# ==========================================
-with st.sidebar:
-    st.image(
-        "https://img.icons8.com/isometric-folders/100/globe-earth.png", width=80
-    )
-    st.title("🎮 Game Control")
-    st.session_state.team_name = st.text_input(
-        "Team Name", st.session_state.team_name
-    )
+def risk_map(weights: dict[str, float]) -> np.ndarray:
+    values = np.array([weights[f] for f in FACTORS], dtype=float) / 100
+    layers = np.stack([DATA[LAYER_KEYS[f]] for f in FACTORS])
+    return np.clip(np.tensordot(values, layers, axes=1), 0, 1)
 
-    # Countdown Timer (15 Minutes Challenge)
-    elapsed = int(time.time() - st.session_state.start_time)
-    remaining = max(0, 900 - elapsed)
-    mins, secs = divmod(remaining, 60)
-    st.metric("⏳ Time Remaining", f"{mins:02d}:{secs:02d}")
 
-    st.markdown("---")
-    st.subheader("🏆 Live Leaderboard")
-    leaderboard_data = pd.DataFrame(
-        [
-            {
-                "Team": st.session_state.team_name,
-                "M1": round(st.session_state.m1_score, 1),
-                "M2": round(st.session_state.m2_score, 1),
-                "Total": round(
-                    st.session_state.m1_score + st.session_state.m2_score, 1
-                ),
-            },
-            {"Team": "HydroBot AI", "M1": 92.0, "M2": 88.5, "Total": 180.5},
-            {"Team": "GeoMaster", "M1": 85.0, "M2": 82.0, "Total": 167.0},
-            {"Team": "UrbanPlanner_01", "M1": 78.0, "M2": 74.5, "Total": 152.5},
-        ]
-    ).sort_values(by="Total", ascending=False)
+def mission1_score(weights: dict[str, int]) -> tuple[int, dict[str, int]]:
+    component = {f: max(0, 100 - abs(weights[f] - BENCHMARK_WEIGHTS[f]) * 3) for f in FACTORS}
+    return min(100, int(round(sum(component.values()) / len(component)))) , component
 
-    st.dataframe(leaderboard_data, hide_index=True, use_container_width=True)
 
-# ==========================================
-# 4. MAIN CONTENT HEADER
-# ==========================================
-st.markdown(
-    '<div class="main-title">🌊 AI Site Selection Challenge</div>',
-    unsafe_allow_html=True,
-)
-st.markdown(
-    '<div class="sub-title">Spatial AI in Action: Flood Risk Mapping & Evacuation Planning</div>',
-    unsafe_allow_html=True,
-)
+def mission2_score(selected: list[tuple[int, int]], risk: np.ndarray) -> tuple[int, dict[str, float]]:
+    if not selected:
+        return 0, {"safety":0, "coverage":0}
+    safety = float(np.mean([1-risk[r,c] for r,c in selected]))
+    coverage = len({(r >= 6, c >= 6) for r,c in selected}) / 4
+    score = max(0, int(round((.65*safety + .35*coverage) * 100 - max(0, len(selected)-4)*3)))
+    return score, {"safety":safety, "coverage":coverage}
 
-col_score1, col_score2, col_score3 = st.columns(3)
-with col_score1:
-    st.markdown(
-        f'<div class="score-card">Mission 1 Score<div class="metric-value">{st.session_state.m1_score:.1f} / 100</div></div>',
-        unsafe_allow_html=True,
-    )
-with col_score2:
-    st.markdown(
-        f'<div class="score-card">Mission 2 Score<div class="metric-value">{st.session_state.m2_score:.1f} / 100</div></div>',
-        unsafe_allow_html=True,
-    )
-with col_score3:
-    total_sc = st.session_state.m1_score + st.session_state.m2_score
-    st.markdown(
-        f'<div class="score-card">Total Score<div class="metric-value">{total_sc:.1f} / 200</div></div>',
-        unsafe_allow_html=True,
-    )
 
-st.markdown("---")
+def cell_label(r: int, c: int) -> str:
+    return f"Cell {chr(65+r)}{c+1}"
 
-tab1, tab2, tab3 = st.tabs(
-    [
-        "🎯 Mission 1: Flood Risk Weights",
-        "📍 Mission 2: Evacuation Sites",
-        "🤖 Chat with AI Advisor",
-    ]
-)
 
-# ==========================================
-# 5. TAB 1: MISSION 1 - WEIGHT CONFIGURATION & 3D MAP
-# ==========================================
-with tab1:
-    st.header("Mission 1: Multi-Criteria Flood Risk Weighting")
-    st.write(
-        "Assign weights (%) to each flood factor. Total weights must equal **100%**."
-    )
+def heatmap(title: str, z: np.ndarray, colorscale: str = "Turbo", selected: list[tuple[int,int]] | None = None) -> go.Figure:
+    fig = go.Figure(go.Heatmap(z=z, colorscale=colorscale, zmin=0, zmax=1, x=[str(i+1) for i in range(z.shape[1])], y=[chr(65+i) for i in range(z.shape[0])], hovertemplate="Cell %{y}%{x}<br>Normalized value: %{z:.2f}<extra></extra>"))
+    for r,c in selected or []:
+        fig.add_trace(go.Scatter(x=[str(c+1)], y=[chr(65+r)], mode="markers", marker=dict(size=22, color="#c9f56a", symbol="circle-open", line=dict(width=3)), showlegend=False, hoverinfo="skip"))
+    fig.update_layout(title=title, height=330, margin=dict(l=8,r=8,t=42,b=8), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#ecf4ff"), xaxis_title="Column", yaxis_title="Row")
+    return fig
 
-    c1, c2 = st.columns([1, 2])
 
-    with c1:
-        st.subheader("⚙️ Factor Weights")
-        w_elev = st.slider("Elevation (Low Elev = High Risk)", 0, 50, 25)
-        w_slope = st.slider("Slope (Flat = High Risk)", 0, 50, 15)
-        w_rain = st.slider("Rainfall Intensity", 0, 50, 20)
-        w_river = st.slider("Proximity to River", 0, 50, 20)
-        w_road = st.slider("Proximity to Road", 0, 30, 5)
-        w_build = st.slider("Building Density", 0, 30, 10)
-        w_hosp = st.slider("Distance to Hospital", 0, 30, 5)
+def call_ai(messages: list[dict[str,str]]) -> str:
+    if OpenAI is None or not os.getenv("OPENAI_API_KEY"):
+        return "I am in demo mode right now. Add OPENAI_API_KEY to enable the live AI advisor. Based on the current evidence, explain which factors you prioritized and how that changes the risk map."
+    client = OpenAI()
+    model = os.getenv("SITE_SELECTION_LLM_MODEL", "gpt-5-mini")
+    kwargs: dict[str, Any] = {"model":model, "messages":messages, "max_completion_tokens":500}
+    if model.startswith("gpt-5"):
+        kwargs["extra_body"] = {"reasoning":{"effort":"low"}}
+    response = client.chat.completions.create(**kwargs)
+    return response.choices[0].message.content or "I could not generate an answer."
 
-        total_w = (
-            w_elev + w_slope + w_rain + w_river + w_road + w_build + w_hosp
-        )
 
-        if total_w != 100:
-            st.warning(f"⚠️ Total Weight: **{total_w}%** (Must be 100%)")
-        else:
-            st.success("✅ Total Weight: **100%**")
+def advisor_prompt() -> str:
+    return """You are Earthy, the friendly AI advisor inside an undergraduate GIS flood-risk game. Answer in concise, plain English. Use only the supplied normalized factor layers, player weights, selected cells, and scores. Never invent measurements or claim this is a real flood forecast. Explain trade-offs: low elevation, rainfall, slope, and short distance to river can increase flood risk; high drainage capacity reduces risk. Ask a reflective follow-up question when helpful. Do not reveal the benchmark weights unless the learner asks about scoring."""
 
-        if st.button("🚀 Calculate Flood Risk Map", use_container_width=True):
-            # Normalize Factors (0..1)
-            norm_elev = 1 - (
-                data["Elevation"] - data["Elevation"].min()
-            ) / (data["Elevation"].max() - data["Elevation"].min())
-            norm_slope = 1 - (data["Slope"] - data["Slope"].min()) / (
-                data["Slope"].max() - data["Slope"].min()
-            )
-            norm_rain = (data["Rainfall"] - data["Rainfall"].min()) / (
-                data["Rainfall"].max() - data["Rainfall"].min()
-            )
-            norm_river = 1 - (
-                data["River_Dist"] - data["River_Dist"].min()
-            ) / (data["River_Dist"].max() - data["River_Dist"].min())
-            norm_road = (data["Road_Dist"] - data["Road_Dist"].min()) / (
-                data["Road_Dist"].max() - data["Road_Dist"].min()
-            )
-            norm_build = data["Building"]
-            norm_hosp = (data["Hospital_Dist"] - data["Hospital_Dist"].min()) / (
-                data["Hospital_Dist"].max() - data["Hospital_Dist"].min()
-            )
 
-            # Calculate Weighted Risk Map
-            risk_map = (
-                w_elev * norm_elev
-                + w_slope * norm_slope
-                + w_rain * norm_rain
-                + w_river * norm_river
-                + w_road * norm_road
-                + w_build * norm_build
-                + w_hosp * norm_hosp
-            ) / 100.0
+init_state()
+if st.session_state.nav not in {"Challenge", "Facilitator guide"}:
+    st.session_state.nav = "Challenge"
+if st_autorefresh:
+    st_autorefresh(interval=1000, key="game_clock")
+remaining = max(0, 20*60 - int(time.monotonic() - st.session_state.timer_started))
+risk = risk_map(st.session_state.weights)
 
-            st.session_state["risk_map"] = risk_map
+# Sidebar HUD and navigation
+st.sidebar.markdown("<div class='kicker'>FLOODOPS // LIVE CLASSROOM</div>", unsafe_allow_html=True)
+st.sidebar.markdown("# AI Site Selection Challenge")
+st.session_state.nav = st.sidebar.radio("Navigate", ["Challenge", "Facilitator guide"], index=["Challenge","Facilitator guide"].index(st.session_state.nav), label_visibility="collapsed")
+st.sidebar.divider()
+mm, ss = divmod(remaining, 60)
+st.sidebar.text_input("Team name", key="team_name", placeholder="Enter your team")
+if st.sidebar.button("Join", use_container_width=True):
+    name = st.session_state.get("team_name", "").strip()
+    if name and name not in st.session_state.teams:
+        st.session_state.teams.append(name)
+        st.session_state.team_scores[name] = {"Mission 1": 0, "Mission 2": 0}
+        st.sidebar.success(f"{name} joined")
+st.sidebar.metric("Time remaining", f"{mm:02d}:{ss:02d}")
+a,b = st.sidebar.columns(2)
+a.metric("Mission 1", f"{st.session_state.mission1_score}/100")
+b.metric("Mission 2", f"{st.session_state.mission2_score}/100")
+st.sidebar.markdown("**TOP 3 TEAMS**")
+if st.session_state.teams:
+    rows = []
+    for team in st.session_state.teams:
+        scores = st.session_state.team_scores.get(team, {"Mission 1": 0, "Mission 2": 0})
+        rows.append({"Team": team, "M1": scores["Mission 1"], "M2": scores["Mission 2"], "Total": scores["Mission 1"] + scores["Mission 2"]})
+    top3 = pd.DataFrame(rows).sort_values(["Total", "Team"], ascending=[False, True]).head(3).reset_index(drop=True)
+    top3.insert(0, "#", range(1, len(top3) + 1))
+    st.sidebar.dataframe(top3, hide_index=True, use_container_width=True)
+else:
+    st.sidebar.caption("No teams yet")
 
-            # Calculate Mission 1 Score
-            user_w = {
-                "Elevation": w_elev,
-                "Slope": w_slope,
-                "Rainfall": w_rain,
-                "River_Dist": w_river,
-                "Road_Dist": w_road,
-                "Building": w_build,
-                "Hospital_Dist": w_hosp,
-            }
-            diff = sum(
-                abs(user_w[k] - OPTIMAL_WEIGHTS[k]) for k in OPTIMAL_WEIGHTS
-            )
-            st.session_state.m1_score = max(0.0, 100.0 - diff * 1.5)
-            st.rerun()
+if st.session_state.nav == "Challenge":
+    st.markdown("<div class='kicker'>ROUND 01 // URBAN RESILIENCE</div>", unsafe_allow_html=True)
+    st.markdown("<div class='hero'>Choose the safest future<br>for Riverside District.</div>", unsafe_allow_html=True)
+    st.markdown("<p class='subtle'>Build the evidence. Generate the map. Then place evacuation sites.</p>", unsafe_allow_html=True)
+    top = st.columns([1.25,1,1])
+    with top[0]:
+        st.markdown("<div class='challenge-card'><span class='badge'>LIVE CHALLENGE</span><h3>Flood resilience sprint</h3><p class='subtle'>Two connected missions. Every choice must be explainable.</p><div class='score-pill'>200 pts available</div></div>", unsafe_allow_html=True)
+    with top[1]: st.metric("Teams on board", len(st.session_state.teams), "Join in left panel")
+    with top[2]: st.metric("Your total", st.session_state.mission1_score + st.session_state.mission2_score, "of 200")
 
-    with c2:
-        st.subheader("🌋 3D Terrain & Calculated Risk Map")
+    st.divider()
+    st.markdown("<div class='kicker'>MISSION 1 // FACTOR WEIGHTING</div>", unsafe_allow_html=True)
+    st.markdown("## Decide what matters most.")
+    st.markdown("<p class='subtle'>Set the five factors on the left. Their evidence maps appear on the right. All weights start at 0% on first launch.</p>", unsafe_allow_html=True)
+    left, right = st.columns([0.8, 2.2], gap="large")
+    with left:
+        for idx, factor in enumerate(FACTORS):
+            st.session_state.weights[factor] = st.slider(factor, 0, 100, int(st.session_state.weights[factor]), 1, key=f"weight_{idx}")
+        total = sum(st.session_state.weights.values())
+        st.metric("Weight total", f"{total}%", "Ready" if total == 100 else "Must equal 100%")
+        if st.button("Generate flood-risk map →", type="primary", disabled=total != 100):
+            st.session_state.map_generated = True
+            st.session_state.mission1_score = mission1_score(st.session_state.weights)[0]
+            current_team = st.session_state.get("team_name", "").strip()
+            if current_team in st.session_state.team_scores:
+                st.session_state.team_scores[current_team]["Mission 1"] = st.session_state.mission1_score
+            st.toast("Flood-risk map generated. Mission 2 is ready below.")
+    with right:
+        st.markdown("### Factor maps · 2D evidence layers")
+        map_cols = st.columns(2)
+        for idx, factor in enumerate(FACTORS):
+            with map_cols[idx % 2]:
+                st.markdown(f"<p class='factor-title'>{factor}</p>", unsafe_allow_html=True)
+                st.plotly_chart(heatmap(factor, DATA[LAYER_KEYS[factor]], "Blues" if factor == "Distance to river" else "Viridis"), use_container_width=True, key=f"factor_map_{idx}")
+    total = sum(st.session_state.weights.values())
+    if total != 100:
+        st.warning("Adjust the sliders until the weight total equals 100%. Then generate the flood-risk map.")
+    else:
+        st.success("Weights total 100%. Click Generate flood-risk map when ready.")
 
-        # 3D Surface Plot of Terrain Elevation
-        fig_3d = go.Figure(
-            data=[
-                go.Surface(
-                    z=data["Elevation"],
-                    x=data["X"],
-                    y=data["Y"],
-                    colorscale="Viridis",
-                )
-            ]
-        )
-        fig_3d.update_layout(
-            title="3D Elevation Surface (Topography)",
-            autosize=True,
-            height=350,
-            margin=dict(l=0, r=0, b=0, t=30),
-        )
-        st.plotly_chart(fig_3d, use_container_width=True)
+    st.divider()
+    st.markdown("<div class='kicker'>MISSION 2 // EVACUATION SITES</div>", unsafe_allow_html=True)
+    if not st.session_state.map_generated:
+        st.info("Mission 2 will activate inside the generated flood-risk map after Mission 1 is submitted.")
+    else:
+        st.markdown("### Flood-risk map · generated from your weights")
+        st.markdown("<p class='subtle'>Click cells directly on this map to make your answer. Select 2–5 sites, then submit.</p>", unsafe_allow_html=True)
+        try:
+            click_event = st.plotly_chart(heatmap("Click a cell to select an evacuation site", risk, "RdYlGn_r", st.session_state.selected_sites), use_container_width=True, on_select="rerun", selection_mode="points", key="risk_map_mission2")
+            if click_event and click_event.selection and click_event.selection.points:
+                point = click_event.selection.points[0]
+                cr, cc = ord(str(point.get("y", "A"))[0])-65, int(point.get("x", 1))-1
+                if 0 <= cr < 12 and 0 <= cc < 12 and (cr,cc) not in st.session_state.selected_sites and len(st.session_state.selected_sites) < 5:
+                    st.session_state.selected_sites.append((cr,cc)); st.rerun()
+        except TypeError:
+            st.plotly_chart(heatmap("Click a cell to select an evacuation site", risk, "RdYlGn_r", st.session_state.selected_sites), use_container_width=True)
+        score2, metrics = mission2_score(st.session_state.selected_sites, risk)
+        selected_text = ", ".join(cell_label(r,c) for r,c in st.session_state.selected_sites)
+        cell_col, submit_col = st.columns([2.2, 1])
+        with cell_col:
+            st.text_input("Selected cell number(s)", value=selected_text or "Click a cell on the map", disabled=True, key="selected_cell_display")
+        with submit_col:
+            st.write("")
+            if st.button("Submit", type="primary", use_container_width=True, disabled=not (2 <= len(st.session_state.selected_sites) <= 5), key="submit_cells_top"):
+                st.session_state.mission2_score = score2
+                current_team = st.session_state.get("team_name", "").strip()
+                if current_team in st.session_state.team_scores:
+                    st.session_state.team_scores[current_team]["Mission 2"] = st.session_state.mission2_score
+                st.toast("Evacuation sites submitted!")
+        m1,m2,m3 = st.columns(3)
+        m1.metric("Mission 2 score", f"{score2}/100")
+        m2.metric("Safety", f"{metrics['safety']:.0%}")
+        m3.metric("Coverage", f"{metrics['coverage']:.0%}")
+        ca, cb = st.columns([1, 1])
+        with ca:
+            if st.button("Clear selected cells"):
+                st.session_state.selected_sites = []; st.rerun()
+        with cb:
+            st.caption("Use the Submit button beside the selected cell number above.")
 
-        if "risk_map" in st.session_state:
-            fig_risk = px.imshow(
-                st.session_state["risk_map"],
-                labels=dict(x="X Coordinate", y="Y Coordinate", color="Risk Level"),
-                x=np.arange(50),
-                y=np.arange(50),
-                color_continuous_scale="Reds",
-                title="Generated Flood Risk Map (0 = Safe, 1 = Extreme Risk)",
-            )
-            fig_risk.add_scatter(
-                x=[data["Hospital_Pos"][0]],
-                y=[data["Hospital_Pos"][1]],
-                mode="markers",
-                marker=dict(size=12, color="blue", symbol="cross"),
-                name="Hospital",
-            )
-            st.plotly_chart(fig_risk, use_container_width=True)
+    if st.session_state.teams:
+        st.markdown("### Live Team Board")
+        board_rows = []
+        for team in st.session_state.teams:
+            scores = st.session_state.team_scores.get(team, {"Mission 1": 0, "Mission 2": 0})
+            board_rows.append({"Team": team, "Mission 1": scores["Mission 1"], "Mission 2": scores["Mission 2"], "Total": scores["Mission 1"] + scores["Mission 2"]})
+        board = pd.DataFrame(board_rows).sort_values(["Total", "Team"], ascending=[False, True]).reset_index(drop=True)
+        board.insert(0, "Rank", range(1, len(board)+1))
+        st.dataframe(board, hide_index=True, use_container_width=True)
 
-# ==========================================
-# 6. TAB 2: MISSION 2 - SITE SELECTION
-# ==========================================
-with tab2:
-    st.header("Mission 2: Select 3 Evacuation Shelter Sites")
-    st.write(
-        "Select coordinates $(X, Y)$ for 3 evacuation shelters. Ideal sites must have **Low Flood Risk**, **High Road Accessibility**, and **Proximity to Hospital**."
-    )
-
-    col_m21, col_m22 = st.columns([1, 2])
-
-    with col_m21:
-        st.subheader("📌 Site Coordinates")
-        s1_x = st.number_input("Site 1 X", 0, 49, 10)
-        s1_y = st.number_input("Site 1 Y", 0, 49, 10)
-        st.markdown("---")
-        s2_x = st.number_input("Site 2 X", 0, 49, 25)
-        s2_y = st.number_input("Site 2 Y", 0, 49, 40)
-        st.markdown("---")
-        s3_x = st.number_input("Site 3 X", 0, 49, 40)
-        s3_y = st.number_input("Site 3 Y", 0, 49, 15)
-
-        if st.button("Evaluate Evacuation Sites", use_container_width=True):
-            if "risk_map" not in st.session_state:
-                st.error("Please calculate the Flood Risk Map in Mission 1 first!")
-            else:
-                rm = st.session_state["risk_map"]
-                sites = [(s1_x, s1_y), (s2_x, s2_y), (s3_x, s3_y)]
-                site_scores = []
-
-                for sx, sy in sites:
-                    risk_val = rm[sy, sx]
-                    road_acc = 1.0 - (
-                        data["Road_Dist"][sy, sx] / data["Road_Dist"].max()
-                    )
-                    hosp_prox = 1.0 - (
-                        data["Hospital_Dist"][sy, sx] / data["Hospital_Dist"].max()
-                    )
-
-                    # Score per site calculation
-                    score = (
-                        (1.0 - risk_val) * 40.0
-                        + road_acc * 30.0
-                        + hosp_prox * 30.0
-                    )
-                    site_scores.append(score)
-
-                st.session_state.m2_score = float(np.mean(site_scores))
-                st.rerun()
-
-    with col_m22:
-        st.subheader("🗺️ Selected Shelter Overlay Map")
-        if "risk_map" in st.session_state:
-            fig_sites = px.imshow(
-                st.session_state["risk_map"],
-                color_continuous_scale="Reds",
-                title="Shelter Sites vs. Flood Risk Heatmap",
-            )
-            # Add Hospital
-            fig_sites.add_scatter(
-                x=[data["Hospital_Pos"][0]],
-                y=[data["Hospital_Pos"][1]],
-                mode="markers",
-                marker=dict(size=14, color="blue", symbol="cross"),
-                name="Hospital",
-            )
-            # Add Selected Sites
-            fig_sites.add_scatter(
-                x=[s1_x, s2_x, s3_x],
-                y=[s1_y, s2_y, s3_y],
-                mode="markers+text",
-                text=["Site 1", "Site 2", "Site 3"],
-                textposition="top center",
-                marker=dict(size=14, color="green", symbol="star"),
-                name="Evacuation Shelters",
-            )
-            st.plotly_chart(fig_sites, use_container_width=True)
-        else:
-            st.info("Complete Mission 1 first to display the overlay map.")
-
-# ==========================================
-# 7. TAB 3: REAL-TIME LLM AI ADVISOR
-# ==========================================
-with tab3:
-    st.header("🤖 Interactive GeoAI Advisor")
-    st.write(
-        "Ask questions about flood modeling, weight rationales, or spatial decision analysis."
-    )
-
-    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY", "YOUR_API_KEY"))
-
-    SYSTEM_PROMPT = """You are 'GeoAI Assistant', an expert spatial data scientist specializing in flood risk modeling and emergency disaster management.
-    You are evaluating a student's flood risk weighting model and evacuation site selection in an interactive challenge.
-    
-    Explain spatial relationships clearly using hydro-geomorphological principles (e.g., elevation, slope, runoff accumulation, proximity to rivers).
-    Respond in a concise, educational, and encouraging tone suitable for university students."""
-
-    # Display chat messages
-    for message in st.session_state.chat_history:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    if user_prompt := st.chat_input(
-        "Ask AI (e.g., 'Why did you give flood risk 30%?')"
-    ):
-        st.session_state.chat_history.append(
-            {"role": "user", "content": user_prompt}
-        )
-        with st.chat_message("user"):
-            st.markdown(user_prompt)
-
-        with st.chat_message("assistant"):
-            try:
-                response = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        *st.session_state.chat_history,
-                    ],
-                )
-                ai_reply = response.choices[0].message.content
-            except Exception as e:
-                ai_reply = f"*(AI Mode Simulation - OpenAI Key required for full API integration)*\n\n**GeoAI Explanation:** Flood risk factors like **Elevation** and **Slope** carry heavy weights (25% and 15%) because water naturally flows to lower elevations and flat areas where surface runoff accumulates. **Proximity to River** (20%) directly reflects exposure to riverine flooding during heavy rainstorms."
-
-            st.markdown(ai_reply)
-            st.session_state.chat_history.append(
-                {"role": "assistant", "content": ai_reply}
-            )
+else:
+    st.markdown("<div class='kicker'>FACILITATOR MODE</div>", unsafe_allow_html=True)
+    st.markdown("<div class='hero'>Run the challenge in class.</div>", unsafe_allow_html=True)
+    st.markdown("The round begins at **20:00**. Students start with all five weights at **0%**, generate the map only after reaching 100%, and then click 2–5 evacuation sites directly on the generated map.")
+    st.markdown("### Data dictionary")
+    st.dataframe(pd.DataFrame({"Layer":FACTORS,"Teaching meaning":["Relative runoff acceleration from terrain gradient","Low elevation is treated as more exposed","Relative rainfall intensity","Normalized distance to the modeled river corridor","Relative ability of terrain to drain water; high capacity lowers risk"]}), hide_index=True, use_container_width=True)
+    st.markdown("### Production upgrade path")
+    st.markdown("Use Postgres/Supabase for shared teams and real-time leaderboard events; replace simulated arrays with GeoTIFF/rasterio layers; keep the AI call server-side and log consented chat for assessment review.")
