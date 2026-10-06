@@ -52,16 +52,17 @@ st.markdown(
 )
 
 # Initialize Session State
-if "team_name" not in st.state_dict():
+if "team_name" not in st.session_state:
     st.session_state.team_name = "Team Explorer"
-if "m1_score" not in st.state_dict():
+if "m1_score" not in st.session_state:
     st.session_state.m1_score = 0.0
-if "m2_score" not in st.state_dict():
+if "m2_score" not in st.session_state:
     st.session_state.m2_score = 0.0
-if "chat_history" not in st.state_dict():
+if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
-if "start_time" not in st.state_dict():
+if "start_time" not in st.session_state:
     st.session_state.start_time = time.time()
+`st.state_dict` does not exist in Streamlit. 
 
 # ==========================================
 # 2. SYNTHETIC SPATIAL DATA GENERATION (50x50 Grid)
