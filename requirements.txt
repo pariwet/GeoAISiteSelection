@@ -8,3 +8,4 @@ rasterio
 shapely
 pyproj
 openai
+torch
