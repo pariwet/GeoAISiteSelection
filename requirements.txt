@@ -1,11 +1,6 @@
-streamlit>=1.38
-pandas
-numpy
-plotly
-requests
-geopandas
-rasterio
-shapely
-pyproj
-openai
-torch
+streamlit>=1.37.0
+streamlit-autorefresh>=1.0.1
+plotly>=5.22.0
+numpy>=1.26.0
+pandas>=2.2.0
+openai>=1.40.0
