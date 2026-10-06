@@ -51,7 +51,15 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+import torch
 import streamlit as st
+
+# Save a PyTorch model state_dict
+torch.save(model.state_dict(), "model.pt")
+
+# Load state_dict into a PyTorch model
+model.load_state_dict(torch.load("model.pt"))
+
 
 # Initialize a key if it doesn't exist yet
 if "my_key" not in st.session_state:
