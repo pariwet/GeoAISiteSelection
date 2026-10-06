@@ -217,7 +217,7 @@ else:
 
 if st.session_state.nav == "Challenge":
     st.markdown("<div class='kicker'>ROUND 01 // URBAN RESILIENCE</div>", unsafe_allow_html=True)
-    st.markdown("<div class='hero'>Choose the safest future<br>for Riverside District.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='hero'>Choose the safest place.</div>", unsafe_allow_html=True)
     st.markdown("<p class='subtle'>Build the evidence. Generate the map. Then place evacuation sites.</p>", unsafe_allow_html=True)
     top = st.columns([1.25,1,1])
     with top[0]:
