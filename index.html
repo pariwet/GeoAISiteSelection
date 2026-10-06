@@ -3,936 +3,586 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Site Selection Challenge - Flood Resilience</title>
-    <!-- Tailwind CSS -->
+    <title>AI Site Selection Challenge</title>
+    <!-- Tailwind CSS & Plotly JS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Plotly.js for 3D Terrain & Heatmaps -->
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
-    <!-- Font Awesome Icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
-    
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        darkBg: '#0f172a',
-                        cardBg: '#1e293b',
-                        cardBorder: '#334155',
-                        brandBlue: '#38bdf8',
-                        brandPurple: '#818cf8',
-                        brandGreen: '#4ade80',
-                        brandRed: '#f87171',
-                        brandYellow: '#facc15'
-                    },
-                    fontFamily: {
-                        sans: ['Outfit', 'sans-serif'],
-                        mono: ['Space Grotesk', 'monospace']
-                    }
-                }
-            }
-        }
-    </script>
     <style>
         body {
             background-color: #0f172a;
             color: #f8fafc;
-            font-family: 'Outfit', sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
-        .glow-box {
-            box-shadow: 0 0 25px -5px rgba(56, 189, 248, 0.25);
+        .score-card {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            border: 2px solid #334155;
+            border-radius: 1rem;
+            padding: 1rem;
+            text-align: center;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
         }
-        .glow-box-purple {
-            box-shadow: 0 0 25px -5px rgba(129, 140, 248, 0.25);
+        .score-card-title {
+            color: #ffffff !important; /* บังคับให้เป็นสีขาว */
+            font-size: 1rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
-        /* Custom Scrollbar */
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
+        .metric-value {
+            font-size: 2.25rem;
+            font-weight: 800;
+            color: #38bdf8;
         }
-        ::-webkit-scrollbar-track {
-            background: #1e293b;
+        /* Floating Globe Chatbot Widget Styling */
+        #globe-widget-container {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            z-index: 9999;
         }
-        ::-webkit-scrollbar-thumb {
-            background: #475569;
+        .globe-avatar-btn {
+            width: 76px;
+            height: 76px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 30% 30%, #38bdf8, #0284c7);
+            border: 4px solid #ffffff;
+            box-shadow: 0 10px 25px rgba(56, 189, 248, 0.5);
+            cursor: pointer;
+            position: relative;
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .globe-avatar-btn:hover {
+            transform: scale(1.1) rotate(5deg);
+        }
+        /* Cartoon Face Features */
+        .globe-eye {
+            width: 10px;
+            height: 14px;
+            background-color: #0f172a;
+            border-radius: 50%;
+            position: absolute;
+            top: 24px;
+        }
+        .globe-eye.left { left: 22px; }
+        .globe-eye.right { right: 22px; }
+        .globe-eye::after {
+            content: '';
+            width: 4px;
+            height: 4px;
+            background: white;
+            border-radius: 50%;
+            position: absolute;
+            top: 2px;
+            right: 2px;
+        }
+        .globe-mouth {
+            width: 20px;
+            height: 10px;
+            border-bottom: 3px solid #0f172a;
+            border-radius: 0 0 12px 12px;
+            position: absolute;
+            top: 42px;
+        }
+        .globe-arm {
+            width: 14px;
+            height: 6px;
+            background-color: #0284c7;
             border-radius: 4px;
+            position: absolute;
+            top: 36px;
         }
-        ::-webkit-scrollbar-thumb:hover {
-            background: #64748b;
+        .globe-arm.left { left: -10px; transform: rotate(-20px); }
+        .globe-arm.right { right: -10px; transform: rotate(20px); }
+
+        /* Chat Pop-up Window */
+        .chat-popup {
+            display: none;
+            width: 360px;
+            height: 480px;
+            background-color: #1e293b;
+            border: 2px solid #38bdf8;
+            border-radius: 1.25rem;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+            flex-direction: column;
+            overflow: hidden;
+            position: absolute;
+            bottom: 90px;
+            right: 0;
+            animation: popupAnim 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        @keyframes popupAnim {
+            from { opacity: 0; transform: translateY(20px) scale(0.9); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
         }
     </style>
 </head>
-<body class="min-h-screen flex flex-col bg-darkBg overflow-x-hidden">
+<body class="p-6">
 
-    <!-- GAME HEADER BAR -->
-    <header class="bg-cardBg border-b border-cardBorder sticky top-0 z-50 px-4 py-3 shadow-lg">
-        <div class="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-            
-            <!-- Logo & Title -->
-            <div class="flex items-center gap-3">
-                <div class="bg-gradient-to-tr from-cyan-500 to-blue-600 p-2.5 rounded-xl text-white shadow-lg">
-                    <i class="fa-solid font-bold fa-water-waves text-2xl"></i>
-                </div>
-                <div>
-                    <h1 class="text-xl font-extrabold tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-sky-300 to-indigo-300">
-                        GeoAI Site Selection Challenge
-                    </h1>
-                    <p class="text-xs text-slate-400 flex items-center gap-2">
-                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                        AI in Geography: Flood Resilient Urban Planning
-                    </p>
-                </div>
+    <!-- Header Section -->
+    <div class="max-w-7xl mx-auto">
+        <div class="flex items-center justify-center gap-4 mb-2">
+            <span class="text-5xl animate-bounce">🌎</span>
+            <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-blue-600">
+                AI Site Selection Challenge
+            </h1>
+        </div>
+        <p class="text-center text-slate-400 mb-6 font-medium">
+            Spatial AI in Action: Flood Risk Mapping & Resilient Site Selection
+        </p>
+
+        <!-- Score Dashboard -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+            <div class="score-card">
+                <div class="score-card-title">⏳ Time Remaining</div>
+                <div id="timer" class="metric-value text-amber-400">20:00</div>
             </div>
-
-            <!-- Game Stats Dashboard -->
-            <div class="flex flex-wrap items-center justify-center gap-3 w-full md:w-auto">
-                
-                <!-- Countdown Timer -->
-                <div class="bg-slate-900/80 border border-slate-700/60 px-3.5 py-1.5 rounded-xl flex items-center gap-2.5">
-                    <i class="fa-solid fa-clock text-amber-400 text-lg animate-bounce"></i>
-                    <div>
-                        <div class="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">Timer</div>
-                        <div id="countdown-timer" class="text-base font-mono font-bold text-amber-300">15:00</div>
-                    </div>
-                </div>
-
-                <!-- Mission 1 Score -->
-                <div class="bg-slate-900/80 border border-slate-700/60 px-3.5 py-1.5 rounded-xl flex items-center gap-2.5">
-                    <i class="fa-solid fa-layer-group text-sky-400 text-lg"></i>
-                    <div>
-                        <div class="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">Mission 1</div>
-                        <div id="m1-score-display" class="text-base font-mono font-bold text-sky-300">0.0 / 100</div>
-                    </div>
-                </div>
-
-                <!-- Mission 2 Score -->
-                <div class="bg-slate-900/80 border border-slate-700/60 px-3.5 py-1.5 rounded-xl flex items-center gap-2.5">
-                    <i class="fa-solid fa-location-crosshairs text-emerald-400 text-lg"></i>
-                    <div>
-                        <div class="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">Mission 2</div>
-                        <div id="m2-score-display" class="text-base font-mono font-bold text-emerald-300">0.0 / 100</div>
-                    </div>
-                </div>
-
-                <!-- Total Score -->
-                <div class="bg-gradient-to-r from-indigo-900/90 to-purple-900/90 border border-indigo-500/40 px-4 py-1.5 rounded-xl flex items-center gap-2.5 shadow-md">
-                    <i class="fa-solid fa-trophy text-yellow-400 text-xl"></i>
-                    <div>
-                        <div class="text-[10px] text-indigo-200 uppercase font-semibold tracking-wider">Total Score</div>
-                        <div id="total-score-display" class="text-lg font-mono font-extrabold text-yellow-300">0.0</div>
-                    </div>
-                </div>
-
+            <div class="score-card">
+                <div class="score-card-title">Mission 1 Score</div>
+                <div id="m1-score" class="metric-value">0.0</div>
+            </div>
+            <div class="score-card">
+                <div class="score-card-title">Mission 2 Score</div>
+                <div id="m2-score" class="metric-value">0.0</div>
+            </div>
+            <div class="score-card">
+                <div class="score-card-title">Total Score</div>
+                <div id="total-score" class="metric-value text-emerald-400">0.0</div>
             </div>
         </div>
-    </header>
 
-    <!-- MAIN CONTENT WRAPPER -->
-    <main class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-4 gap-6">
-        
-        <!-- SIDEBAR: TEAM & LEADERBOARD (1 Column) -->
-        <aside class="lg:col-span-1 flex flex-col gap-5">
+        <!-- Main Layout -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
             
-            <!-- Team Info Card -->
-            <div class="bg-cardBg border border-cardBorder rounded-2xl p-5 shadow-md">
-                <h2 class="text-sm font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-2">
-                    <i class="fa-solid fa-users text-sky-400"></i> Player Profile
-                </h2>
-                <div class="space-y-3">
-                    <div>
-                        <label class="text-xs text-slate-400 font-medium">Team Name</label>
-                        <input id="team-name-input" type="text" value="GeoExplorers_Alpha" 
-                               class="w-full mt-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm text-cyan-300 font-semibold focus:outline-none focus:border-cyan-500 transition">
-                    </div>
-                    <div class="flex justify-between items-center bg-slate-900/60 p-2.5 rounded-xl text-xs">
-                        <span class="text-slate-400">Status</span>
-                        <span class="text-emerald-400 font-semibold flex items-center gap-1.5">
-                            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span> Active Mission
-                        </span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Live Leaderboard Card -->
-            <div class="bg-cardBg border border-cardBorder rounded-2xl p-5 shadow-md flex-1 flex flex-col">
-                <div class="flex items-center justify-between mb-4">
-                    <h2 class="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                        <i class="fa-solid fa-ranking-star text-amber-400"></i> Live Leaderboard
-                    </h2>
-                    <span class="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full font-mono">Live</span>
-                </div>
+            <!-- Left Controls & Leaderboard -->
+            <div class="space-y-6">
                 
-                <div class="space-y-2.5 overflow-y-auto max-h-[360px] pr-1" id="leaderboard-list">
-                    <!-- Dynamic Leaderboard Entries will render here -->
-                </div>
-            </div>
-
-        </aside>
-
-        <!-- MAIN INTERACTIVE WORKSPACE (3 Columns) -->
-        <section class="lg:col-span-3 flex flex-col gap-5">
-            
-            <!-- NAV TABS -->
-            <div class="flex flex-wrap gap-2 bg-cardBg p-1.5 rounded-2xl border border-cardBorder">
-                <button id="tab-btn-m1" onclick="switchTab('m1')" 
-                        class="tab-btn flex-1 min-w-[140px] py-2.5 px-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-md">
-                    <i class="fa-solid fa-sliders"></i> Mission 1: Flood Weights
-                </button>
-                <button id="tab-btn-m2" onclick="switchTab('m2')" 
-                        class="tab-btn flex-1 min-w-[140px] py-2.5 px-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2 text-slate-400 hover:text-white hover:bg-slate-800 transition">
-                    <i class="fa-solid fa-map-pin"></i> Mission 2: Evacuation Sites
-                </button>
-                <button id="tab-btn-ai" onclick="switchTab('ai')" 
-                        class="tab-btn flex-1 min-w-[140px] py-2.5 px-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2 text-slate-400 hover:text-white hover:bg-slate-800 transition">
-                    <i class="fa-solid fa-robot text-indigo-400"></i> AI Advisor
-                </button>
-            </div>
-
-            <!-- TAB 1 CONTENT: MISSION 1 -->
-            <div id="tab-content-m1" class="tab-page flex flex-col gap-5">
-                <div class="bg-cardBg border border-cardBorder rounded-2xl p-5 shadow-md">
-                    <div class="flex flex-col md:flex-row md:items-center justify-between gap-2 mb-4">
-                        <div>
-                            <h2 class="text-lg font-bold text-sky-400 flex items-center gap-2">
-                                <i class="fa-solid fa-scale-balanced"></i> Multi-Criteria Evaluation (MCE) Factor Weighting
-                            </h2>
-                            <p class="text-xs text-slate-400">
-                                Adjust the influence (%) of each physical and socio-economic factor. Total sum must equal <strong class="text-amber-300">100%</strong>.
-                            </p>
-                        </div>
-                        <div class="flex items-center gap-3">
-                            <span id="weight-sum-badge" class="font-mono text-sm px-3 py-1 rounded-full font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                                Total: 100%
-                            </span>
-                            <button onclick="calculateFloodRisk()" class="bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-md transition flex items-center gap-2">
-                                <i class="fa-solid fa-bolt"></i> Generate Risk Map
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- Sliders Grid -->
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 bg-slate-900/60 p-4 rounded-xl border border-slate-800">
-                        
-                        <!-- Factor: Elevation -->
-                        <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
-                            <div class="flex justify-between items-center text-xs mb-1">
-                                <span class="font-semibold text-slate-200 flex items-center gap-1.5"><i class="fa-solid fa-mountain text-amber-400"></i> Elevation</span>
-                                <span id="val-elevation" class="font-mono font-bold text-sky-400">25%</span>
-                            </div>
-                            <input type="range" id="slider-elevation" min="0" max="50" value="25" oninput="updateWeights('elevation')" class="w-full accent-sky-400 cursor-pointer">
-                            <p class="text-[10px] text-slate-400 mt-1">Lower elevation accumulates runoff.</p>
-                        </div>
-
-                        <!-- Factor: Slope -->
-                        <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
-                            <div class="flex justify-between items-center text-xs mb-1">
-                                <span class="font-semibold text-slate-200 flex items-center gap-1.5"><i class="fa-solid fa-chart-line text-emerald-400"></i> Terrain Slope</span>
-                                <span id="val-slope" class="font-mono font-bold text-sky-400">15%</span>
-                            </div>
-                            <input type="range" id="slider-slope" min="0" max="50" value="15" oninput="updateWeights('slope')" class="w-full accent-sky-400 cursor-pointer">
-                            <p class="text-[10px] text-slate-400 mt-1">Flatter terrain causes surface water pooling.</p>
-                        </div>
-
-                        <!-- Factor: Rainfall -->
-                        <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
-                            <div class="flex justify-between items-center text-xs mb-1">
-                                <span class="font-semibold text-slate-200 flex items-center gap-1.5"><i class="fa-solid fa-cloud-showers-heavy text-blue-400"></i> Rainfall Volume</span>
-                                <span id="val-rainfall" class="font-mono font-bold text-sky-400">20%</span>
-                            </div>
-                            <input type="range" id="slider-rainfall" min="0" max="50" value="20" oninput="updateWeights('rainfall')" class="w-full accent-sky-400 cursor-pointer">
-                            <p class="text-[10px] text-slate-400 mt-1">Primary meteorological driver for runoff.</p>
-                        </div>
-
-                        <!-- Factor: River Proximity -->
-                        <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
-                            <div class="flex justify-between items-center text-xs mb-1">
-                                <span class="font-semibold text-slate-200 flex items-center gap-1.5"><i class="fa-solid fa-water text-cyan-400"></i> River Distance</span>
-                                <span id="val-river" class="font-mono font-bold text-sky-400">20%</span>
-                            </div>
-                            <input type="range" id="slider-river" min="0" max="50" value="20" oninput="updateWeights('river')" class="w-full accent-sky-400 cursor-pointer">
-                            <p class="text-[10px] text-slate-400 mt-1">Proximity increases overbank inundation hazard.</p>
-                        </div>
-
-                        <!-- Factor: Road Distance -->
-                        <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
-                            <div class="flex justify-between items-center text-xs mb-1">
-                                <span class="font-semibold text-slate-200 flex items-center gap-1.5"><i class="fa-solid fa-road text-yellow-400"></i> Road Access</span>
-                                <span id="val-road" class="font-mono font-bold text-sky-400">5%</span>
-                            </div>
-                            <input type="range" id="slider-road" min="0" max="30" value="5" oninput="updateWeights('road')" class="w-full accent-sky-400 cursor-pointer">
-                            <p class="text-[10px] text-slate-400 mt-1">Main transport route availability.</p>
-                        </div>
-
-                        <!-- Factor: Building Density -->
-                        <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
-                            <div class="flex justify-between items-center text-xs mb-1">
-                                <span class="font-semibold text-slate-200 flex items-center gap-1.5"><i class="fa-solid fa-building-user text-purple-400"></i> Building Density</span>
-                                <span id="val-building" class="font-mono font-bold text-sky-400">10%</span>
-                            </div>
-                            <input type="range" id="slider-building" min="0" max="30" value="10" oninput="updateWeights('building')" class="w-full accent-sky-400 cursor-pointer">
-                            <p class="text-[10px] text-slate-400 mt-1">Urban exposure & impervious surfaces.</p>
-                        </div>
-
-                        <!-- Factor: Hospital Proximity -->
-                        <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60 lg:col-span-1 md:col-span-2">
-                            <div class="flex justify-between items-center text-xs mb-1">
-                                <span class="font-semibold text-slate-200 flex items-center gap-1.5"><i class="fa-solid fa-hospital text-rose-400"></i> Hospital Distance</span>
-                                <span id="val-hospital" class="font-mono font-bold text-sky-400">5%</span>
-                            </div>
-                            <input type="range" id="slider-hospital" min="0" max="30" value="5" oninput="updateWeights('hospital')" class="w-full accent-sky-400 cursor-pointer">
-                            <p class="text-[10px] text-slate-400 mt-1">Proximity to emergency medical care.</p>
-                        </div>
-
-                    </div>
+                <!-- Team Setup -->
+                <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700">
+                    <h2 class="text-lg font-bold text-sky-400 mb-3 flex items-center gap-2">
+                        <span>🚩</span> Team Setup
+                    </h2>
+                    <input type="text" id="team-name-input" value="Team Alpha" 
+                           class="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-sky-500">
                 </div>
 
-                <!-- Visualizers Grid: 3D Surface & Heatmap -->
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                <!-- Mission 1 Controls -->
+                <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700">
+                    <h2 class="text-lg font-bold text-sky-400 mb-3 flex items-center gap-2">
+                        <span>🎯</span> Mission 1: Flood Weights (%)
+                    </h2>
+                    <p class="text-xs text-slate-400 mb-4">Set weight for each factor. Total must equal 100%.</p>
                     
-                    <!-- 3D Surface Plot -->
-                    <div class="bg-cardBg border border-cardBorder rounded-2xl p-4 shadow-md flex flex-col">
-                        <h3 class="text-sm font-bold text-slate-200 mb-2 flex items-center gap-2">
-                            <i class="fa-solid fa-cube text-indigo-400"></i> 3D Elevation Terrain Model (50x50 Grid)
-                        </h3>
-                        <div id="plotly-3d-terrain" class="w-full h-[340px] rounded-xl overflow-hidden bg-slate-900 border border-slate-800"></div>
-                    </div>
-
-                    <!-- Flood Risk Heatmap -->
-                    <div class="bg-cardBg border border-cardBorder rounded-2xl p-4 shadow-md flex flex-col">
-                        <h3 class="text-sm font-bold text-slate-200 mb-2 flex items-center gap-2">
-                            <i class="fa-solid fa-map text-red-400"></i> Calculated Flood-Risk Heatmap
-                        </h3>
-                        <div id="plotly-risk-map" class="w-full h-[340px] rounded-xl overflow-hidden bg-slate-900 border border-slate-800"></div>
-                    </div>
-
-                </div>
-            </div>
-
-            <!-- TAB 2 CONTENT: MISSION 2 -->
-            <div id="tab-content-m2" class="tab-page hidden flex-col gap-5">
-                <div class="bg-cardBg border border-cardBorder rounded-2xl p-5 shadow-md">
-                    <div class="flex flex-col md:flex-row md:items-center justify-between gap-2 mb-4">
+                    <div class="space-y-4 text-sm">
                         <div>
-                            <h2 class="text-lg font-bold text-emerald-400 flex items-center gap-2">
-                                <i class="fa-solid fa-location-dot"></i> Emergency Evacuation Site Selection
-                            </h2>
-                            <p class="text-xs text-slate-400">
-                                Select <strong class="text-emerald-300">3 Optimal Shelter Locations</strong> on the grid map. Sites must have **Low Flood Risk**, **High Road Access**, and **Hospital Proximity**.
-                            </p>
+                            <div class="flex justify-between mb-1">
+                                <span>Elevation (Low = Risk)</span>
+                                <span id="val-elev" class="font-bold">0%</span>
+                            </div>
+                            <input type="range" id="w-elev" min="0" max="100" value="0" class="w-full accent-sky-500" oninput="updateWeights()">
                         </div>
-                        <button onclick="evaluateEvacuationSites()" class="bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-md transition flex items-center gap-2">
-                            <i class="fa-solid fa-circle-check"></i> Evaluate Sites & Score
-                        </button>
+                        <div>
+                            <div class="flex justify-between mb-1">
+                                <span>Slope (Flat = Risk)</span>
+                                <span id="val-slope" class="font-bold">0%</span>
+                            </div>
+                            <input type="range" id="w-slope" min="0" max="100" value="0" class="w-full accent-sky-500" oninput="updateWeights()">
+                        </div>
+                        <div>
+                            <div class="flex justify-between mb-1">
+                                <span>Rainfall Intensity</span>
+                                <span id="val-rain" class="font-bold">0%</span>
+                            </div>
+                            <input type="range" id="w-rain" min="0" max="100" value="0" class="w-full accent-sky-500" oninput="updateWeights()">
+                        </div>
+                        <div>
+                            <div class="flex justify-between mb-1">
+                                <span>Proximity to River</span>
+                                <span id="val-river" class="font-bold">0%</span>
+                            </div>
+                            <input type="range" id="w-river" min="0" max="100" value="0" class="w-full accent-sky-500" oninput="updateWeights()">
+                        </div>
                     </div>
 
-                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
-                        
-                        <!-- Interactive Selector Controls -->
-                        <div class="lg:col-span-1 space-y-3 bg-slate-900/60 p-4 rounded-xl border border-slate-800">
-                            
-                            <!-- Site 1 Input -->
-                            <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
-                                <div class="text-xs font-bold text-emerald-400 mb-2 flex items-center justify-between">
-                                    <span><i class="fa-solid fa-star"></i> Shelter Site 1</span>
-                                    <span id="site1-coord-badge" class="font-mono text-[10px] bg-emerald-500/20 px-2 py-0.5 rounded text-emerald-300">X: 10, Y: 10</span>
-                                </div>
-                                <div class="grid grid-cols-2 gap-2 text-xs">
-                                    <div>
-                                        <label class="text-slate-400 text-[10px]">Grid X (0-49)</label>
-                                        <input type="number" id="site1-x" min="0" max="49" value="10" onchange="updateSiteMarkersFromInput()" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white font-mono text-center">
-                                    </div>
-                                    <div>
-                                        <label class="text-slate-400 text-[10px]">Grid Y (0-49)</label>
-                                        <input type="number" id="site1-y" min="0" max="49" value="10" onchange="updateSiteMarkersFromInput()" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white font-mono text-center">
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Site 2 Input -->
-                            <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
-                                <div class="text-xs font-bold text-cyan-400 mb-2 flex items-center justify-between">
-                                    <span><i class="fa-solid fa-star"></i> Shelter Site 2</span>
-                                    <span id="site2-coord-badge" class="font-mono text-[10px] bg-cyan-500/20 px-2 py-0.5 rounded text-cyan-300">X: 25, Y: 40</span>
-                                </div>
-                                <div class="grid grid-cols-2 gap-2 text-xs">
-                                    <div>
-                                        <label class="text-slate-400 text-[10px]">Grid X (0-49)</label>
-                                        <input type="number" id="site2-x" min="0" max="49" value="25" onchange="updateSiteMarkersFromInput()" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white font-mono text-center">
-                                    </div>
-                                    <div>
-                                        <label class="text-slate-400 text-[10px]">Grid Y (0-49)</label>
-                                        <input type="number" id="site2-y" min="0" max="49" value="40" onchange="updateSiteMarkersFromInput()" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white font-mono text-center">
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Site 3 Input -->
-                            <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
-                                <div class="text-xs font-bold text-amber-400 mb-2 flex items-center justify-between">
-                                    <span><i class="fa-solid fa-star"></i> Shelter Site 3</span>
-                                    <span id="site3-coord-badge" class="font-mono text-[10px] bg-amber-500/20 px-2 py-0.5 rounded text-amber-300">X: 40, Y: 15</span>
-                                </div>
-                                <div class="grid grid-cols-2 gap-2 text-xs">
-                                    <div>
-                                        <label class="text-slate-400 text-[10px]">Grid X (0-49)</label>
-                                        <input type="number" id="site3-x" min="0" max="49" value="40" onchange="updateSiteMarkersFromInput()" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white font-mono text-center">
-                                    </div>
-                                    <div>
-                                        <label class="text-slate-400 text-[10px]">Grid Y (0-49)</label>
-                                        <input type="number" id="site3-y" min="0" max="49" value="15" onchange="updateSiteMarkersFromInput()" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white font-mono text-center">
-                                    </div>
-                                </div>
-                            </div>
-
-                            <p class="text-[11px] text-slate-400 bg-slate-800/40 p-2.5 rounded-lg border border-slate-700/50">
-                                <i class="fa-solid fa-circle-info text-sky-400"></i> Tip: You can also click directly on the interactive heatmap map to pick active shelter location coordinates!
-                            </p>
-
-                        </div>
-
-                        <!-- Map Visualizer with Click Listener -->
-                        <div class="lg:col-span-2 bg-slate-900 rounded-xl p-2 border border-slate-800 flex flex-col">
-                            <div id="plotly-site-map" class="w-full h-[420px] rounded-lg overflow-hidden"></div>
-                        </div>
-
+                    <div class="mt-4 p-2 rounded-lg text-center font-bold text-sm" id="weight-status">
+                        Total Weight: 0%
                     </div>
+
+                    <button onclick="calculateMission1()" class="w-full mt-4 py-3 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-bold rounded-xl shadow-lg transition">
+                        Compute Flood Risk Map
+                    </button>
                 </div>
-            </div>
 
-            <!-- TAB 3 CONTENT: AI ADVISOR -->
-            <div id="tab-content-ai" class="tab-page hidden flex-col gap-5">
-                <div class="bg-cardBg border border-cardBorder rounded-2xl p-5 shadow-md flex flex-col h-[600px]">
+                <!-- Mission 2 Controls -->
+                <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700">
+                    <h2 class="text-lg font-bold text-sky-400 mb-3 flex items-center gap-2">
+                        <span>📍</span> Mission 2: Evacuation Sites
+                    </h2>
+                    <p class="text-xs text-slate-400 mb-4">Click map or input coordinates (X: 0..49, Y: 0..49) for 3 sites.</p>
                     
-                    <!-- AI Header -->
-                    <div class="flex items-center justify-between pb-4 border-b border-cardBorder">
-                        <div class="flex items-center gap-3">
-                            <div class="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 text-xl">
-                                <i class="fa-solid fa-robot"></i>
-                            </div>
-                            <div>
-                                <h2 class="text-base font-bold text-indigo-300">GeoAI Assistant</h2>
-                                <p class="text-xs text-slate-400">Powered by Gemini 3 Flash • Hydro-Geomorphology Expert</p>
-                            </div>
+                    <div class="grid grid-cols-3 gap-2 text-xs mb-4">
+                        <div>
+                            <label class="block mb-1">Site 1 (X, Y)</label>
+                            <input type="number" id="s1-x" value="10" min="0" max="49" class="w-full p-1 bg-slate-900 border rounded text-center">
+                            <input type="number" id="s1-y" value="10" min="0" max="49" class="w-full p-1 bg-slate-900 border rounded text-center mt-1">
                         </div>
-                        <span class="text-xs bg-indigo-500/10 text-indigo-400 px-3 py-1 rounded-full border border-indigo-500/20 font-mono">
-                            Interactive Q&A Active
-                        </span>
-                    </div>
-
-                    <!-- Chat Messages Box -->
-                    <div id="chat-messages" class="flex-1 overflow-y-auto p-4 my-3 space-y-4 bg-slate-900/60 rounded-xl border border-slate-800">
-                        <!-- Default Initial Message -->
-                        <div class="flex gap-3 max-w-[85%]">
-                            <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
-                                AI
-                            </div>
-                            <div class="bg-slate-800 p-3.5 rounded-2xl rounded-tl-none border border-slate-700/60 text-xs text-slate-200 leading-relaxed shadow">
-                                👋 Welcome, Commander! I am your <strong>GeoAI Assistant</strong>. I can explain spatial relationships, factor weights, and hydro-geomorphological principles.
-                                <br><br>
-                                💡 <em>Try asking:</em>
-                                <ul class="list-disc list-inside mt-1.5 text-indigo-300 space-y-1">
-                                    <li>"Why did you give flood risk 30% to elevation?"</li>
-                                    <li>"How does slope affect runoff pooling?"</li>
-                                    <li>"Evaluate my shelter site choices!"</li>
-                                </ul>
-                            </div>
+                        <div>
+                            <label class="block mb-1">Site 2 (X, Y)</label>
+                            <input type="number" id="s2-x" value="25" min="0" max="49" class="w-full p-1 bg-slate-900 border rounded text-center">
+                            <input type="number" id="s2-y" value="40" min="0" max="49" class="w-full p-1 bg-slate-900 border rounded text-center mt-1">
+                        </div>
+                        <div>
+                            <label class="block mb-1">Site 3 (X, Y)</label>
+                            <input type="number" id="s3-x" value="40" min="0" max="49" class="w-full p-1 bg-slate-900 border rounded text-center">
+                            <input type="number" id="s3-y" value="15" min="0" max="49" class="w-full p-1 bg-slate-900 border rounded text-center mt-1">
                         </div>
                     </div>
 
-                    <!-- Input Box -->
-                    <div class="flex gap-2">
-                        <input id="chat-input" type="text" placeholder="Type your spatial question here..." 
-                               onkeydown="if(event.key==='Enter') sendChatMessage()"
-                               class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 transition">
-                        <button onclick="sendChatMessage()" class="bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-400 hover:to-purple-500 text-white font-bold px-5 py-2.5 rounded-xl text-sm shadow-md transition flex items-center gap-2">
-                            <span>Send</span> <i class="fa-solid fa-paper-plane text-xs"></i>
-                        </button>
-                    </div>
-
+                    <button onclick="calculateMission2()" class="w-full py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold rounded-xl shadow-lg transition">
+                        Evaluate Evacuation Sites
+                    </button>
                 </div>
+
+                <!-- Leaderboard -->
+                <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700">
+                    <div class="flex justify-between items-center mb-3">
+                        <h2 class="text-lg font-bold text-sky-400 flex items-center gap-2">
+                            <span>🏆</span> Live Leaderboard
+                        </h2>
+                        <button onclick="saveToLeaderboard()" class="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded">Save Score</button>
+                    </div>
+                    <table class="w-full text-left text-xs">
+                        <thead>
+                            <tr class="text-slate-400 border-b border-slate-700">
+                                <th class="pb-2">Team</th>
+                                <th class="pb-2 text-center">M1</th>
+                                <th class="pb-2 text-center">M2</th>
+                                <th class="pb-2 text-right">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody id="leaderboard-body">
+                            <!-- Dynamically populated -->
+                        </tbody>
+                    </table>
+                </div>
+
             </div>
 
-        </section>
-    </main>
+            <!-- Right Visualization Map Panel -->
+            <div class="lg:col-span-2 space-y-6">
+                
+                <!-- 2D Layer Selector -->
+                <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700">
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+                        <h2 class="text-lg font-bold text-sky-400 flex items-center gap-2">
+                            <span>🗺️</span> Spatial Data & Risk Viewer
+                        </h2>
+                        <div class="flex gap-2 text-xs">
+                            <select id="layer-select" onchange="renderSelectedLayer()" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white">
+                                <option value="risk">Calculated Flood Risk Map</option>
+                                <option value="elevation">Layer 1: Elevation (m)</option>
+                                <option value="slope">Layer 2: Slope (%)</option>
+                                <option value="rainfall">Layer 3: Rainfall Intensity (mm)</option>
+                                <option value="river">Layer 4: Distance to River (m)</option>
+                            </select>
+                        </div>
+                    </div>
 
-    <!-- JAVASCRIPT LOGIC -->
+                    <!-- Plotly 2D Map Canvas -->
+                    <div id="map-plot" class="w-full h-[550px] bg-slate-900 rounded-xl overflow-hidden"></div>
+                </div>
+
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Floating Globe AI Advisor Widget -->
+    <div id="globe-widget-container">
+        <!-- Chat Pop-up Window -->
+        <div id="chat-popup" class="chat-popup">
+            <div class="bg-slate-800 px-4 py-3 border-b border-slate-700 flex justify-between items-center">
+                <div class="flex items-center gap-2">
+                    <span class="text-2xl">🌎</span>
+                    <div>
+                        <h3 class="font-bold text-sm text-white">GeoAI Globe Advisor</h3>
+                        <p class="text-[10px] text-emerald-400">● Online & Ready to Help</p>
+                    </div>
+                </div>
+                <button onclick="toggleChat()" class="text-slate-400 hover:text-white font-bold text-lg">&times;</button>
+            </div>
+            <div id="chat-messages" class="flex-1 p-4 overflow-y-auto space-y-3 text-xs">
+                <div class="bg-slate-700 p-3 rounded-xl text-slate-200 max-w-[85%]">
+                    Hello! I'm your GeoAI Advisor. 🌎 Ask me anything about flood factors or why certain weights are important!
+                </div>
+            </div>
+            <div class="p-3 border-t border-slate-700 bg-slate-900 flex gap-2">
+                <input type="text" id="chat-input" placeholder="Ask AI (e.g. Why is slope important?)" 
+                       class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-sky-500"
+                       onkeypress="if(event.key==='Enter') sendChatMessage()">
+                <button onclick="sendChatMessage()" class="bg-sky-500 hover:bg-sky-400 px-3 py-2 rounded-lg text-xs font-bold text-white">Send</button>
+            </div>
+        </div>
+
+        <!-- Cartoon Globe Avatar Button -->
+        <div class="globe-avatar-btn" onclick="toggleChat()" title="Talk to GeoAI Advisor">
+            <div class="globe-arm left"></div>
+            <div class="globe-arm right"></div>
+            <div class="globe-eye left"></div>
+            <div class="globe-eye right"></div>
+            <div class="globe-mouth"></div>
+        </div>
+    </div>
+
+    <!-- Application Script -->
     <script>
-        // ==========================================
-        // 1. SPATIAL DATA GENERATION (50x50 Synthetic Grid)
-        // ==========================================
+        // 1. Grid Synthetic Data (50x50)
         const GRID_SIZE = 50;
-        const gridX = Array.from({length: GRID_SIZE}, (_, i) => i);
-        const gridY = Array.from({length: GRID_SIZE}, (_, i) => i);
-
-        // Matrices
-        let elevationMatrix = [];
-        let slopeMatrix = [];
-        let rainfallMatrix = [];
-        let riverDistMatrix = [];
-        let roadDistMatrix = [];
-        let buildingMatrix = [];
-        let hospitalDistMatrix = [];
-        let riskMatrix = [];
-
-        const hospitalPos = { x: 35, y: 35 };
-
-        function generateSyntheticData() {
-            elevationMatrix = Array(GRID_SIZE).fill(0).map(() => Array(GRID_SIZE).fill(0));
-            slopeMatrix = Array(GRID_SIZE).fill(0).map(() => Array(GRID_SIZE).fill(0));
-            rainfallMatrix = Array(GRID_SIZE).fill(0).map(() => Array(GRID_SIZE).fill(0));
-            riverDistMatrix = Array(GRID_SIZE).fill(0).map(() => Array(GRID_SIZE).fill(0));
-            roadDistMatrix = Array(GRID_SIZE).fill(0).map(() => Array(GRID_SIZE).fill(0));
-            buildingMatrix = Array(GRID_SIZE).fill(0).map(() => Array(GRID_SIZE).fill(0));
-            hospitalDistMatrix = Array(GRID_SIZE).fill(0).map(() => Array(GRID_SIZE).fill(0));
-
-            for (let y = 0; y < GRID_SIZE; y++) {
-                for (let x = 0; x < GRID_SIZE; x++) {
-                    // Elevation: High on perimeter, central valley depression
-                    const centerDist = Math.sqrt(Math.pow(x - 25, 2) + Math.pow(y - 25, 2));
-                    const elev = Math.max(10, 150 - (centerDist * 2.5) + Math.sin(x / 4) * 12);
-                    elevationMatrix[y][x] = parseFloat(elev.toFixed(2));
-
-                    // Rainfall: Gradient towards top-right
-                    rainfallMatrix[y][x] = parseFloat((120 + x * 2.2 + y * 2.8).toFixed(2));
-
-                    // River Distance: Diagonal curving river Y = 0.8X + 5
-                    const riverY = 0.8 * x + 5;
-                    riverDistMatrix[y][x] = parseFloat(Math.abs(y - riverY).toFixed(2));
-
-                    // Road Distance: Cross intersecting main roads at X=20 and Y=30
-                    const roadDist = Math.min(Math.abs(x - 20), Math.abs(y - 30));
-                    roadDistMatrix[y][x] = parseFloat(roadDist.toFixed(2));
-
-                    // Building Density
-                    const b1 = Math.exp(-(Math.pow(x - 30, 2) + Math.pow(y - 20, 2)) / 150);
-                    const b2 = Math.exp(-(Math.pow(x - 10, 2) + Math.pow(y - 40, 2)) / 120);
-                    buildingMatrix[y][x] = parseFloat(Math.min(1.0, b1 + b2).toFixed(2));
-
-                    // Hospital Distance
-                    const hDist = Math.sqrt(Math.pow(x - hospitalPos.x, 2) + Math.pow(y - hospitalPos.y, 2));
-                    hospitalDistMatrix[y][x] = parseFloat(hDist.toFixed(2));
-                }
-            }
-
-            // Calculate Slope from Elevation Gradient
-            for (let y = 0; y < GRID_SIZE; y++) {
-                for (let x = 0; x < GRID_SIZE; x++) {
-                    const dx = (x < GRID_SIZE - 1 ? elevationMatrix[y][x + 1] : elevationMatrix[y][x]) - 
-                               (x > 0 ? elevationMatrix[y][x - 1] : elevationMatrix[y][x]);
-                    const dy = (y < GRID_SIZE - 1 ? elevationMatrix[y + 1][x] : elevationMatrix[y][x]) - 
-                               (y > 0 ? elevationMatrix[y - 1][x] : elevationMatrix[y][x]);
-                    slopeMatrix[y][x] = parseFloat(Math.sqrt(dx * dx + dy * dy).toFixed(2));
-                }
-            }
-        }
-
-        // Optimal Benchmarks for scoring
-        const OPTIMAL_WEIGHTS = {
-            elevation: 25,
-            slope: 15,
-            rainfall: 20,
-            river: 20,
-            road: 5,
-            building: 10,
-            hospital: 5
+        const dataGrid = {
+            elevation: [],
+            slope: [],
+            rainfall: [],
+            riverDist: [],
+            calculatedRisk: null
         };
 
-        // Current User Weights
-        let userWeights = { ...OPTIMAL_WEIGHTS };
+        // Initialize Synthetic Layers
+        for (let r = 0; r < GRID_SIZE; r++) {
+            const rowElev = [], rowSlope = [], rowRain = [], rowRiver = [];
+            for (let c = 0; c < GRID_SIZE; c++) {
+                // Elevation (0-150m)
+                let elev = 150 - (Math.sqrt((c - 25)**2 + (r - 25)**2) * 2.5 + Math.sin(c / 5) * 10);
+                elev = Math.max(10, Math.min(200, elev));
+                rowElev.push(elev);
 
-        // Normalize Sliders
-        function updateWeights(changedKey) {
-            userWeights[changedKey] = parseInt(document.getElementById(`slider-${changedKey}`).value);
-            document.getElementById(`val-${changedKey}`).innerText = `${userWeights[changedKey]}%`;
+                // Rainfall (150-350mm)
+                let rain = 150 + c * 2 + r * 2.5;
+                rowRain.push(rain);
 
-            // Calculate total sum
-            let total = Object.values(userWeights).reduce((a, b) => a + b, 0);
-            const badge = document.getElementById('weight-sum-badge');
-            
-            badge.innerText = `Total: ${total}%`;
-            if (total === 100) {
-                badge.className = "font-mono text-sm px-3 py-1 rounded-full font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30";
-            } else {
-                badge.className = "font-mono text-sm px-3 py-1 rounded-full font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30";
+                // River Distance
+                let river = Math.abs(r - (0.8 * c + 5));
+                rowRiver.push(river);
             }
+            dataGrid.elevation.push(rowElev);
+            dataGrid.rainfall.push(rowRain);
+            dataGrid.riverDist.push(rowRiver);
         }
 
-        function calculateFloodRisk() {
-            riskMatrix = Array(GRID_SIZE).fill(0).map(() => Array(GRID_SIZE).fill(0));
-
-            // Min/Max for normalization
-            const minElev = 10, maxElev = 180;
-            const minSlope = 0, maxSlope = 40;
-            const minRain = 120, maxRain = 370;
-            const maxRiver = 35;
-            const maxRoad = 30;
-            const maxHosp = 50;
-
-            for (let y = 0; y < GRID_SIZE; y++) {
-                for (let x = 0; x < GRID_SIZE; x++) {
-                    const normElev = 1.0 - ((elevationMatrix[y][x] - minElev) / (maxElev - minElev));
-                    const normSlope = 1.0 - Math.min(1.0, slopeMatrix[y][x] / maxSlope);
-                    const normRain = (rainfallMatrix[y][x] - minRain) / (maxRain - minRain);
-                    const normRiver = 1.0 - Math.min(1.0, riverDistMatrix[y][x] / maxRiver);
-                    const normRoad = Math.min(1.0, roadDistMatrix[y][x] / maxRoad);
-                    const normBuild = buildingMatrix[y][x];
-                    const normHosp = Math.min(1.0, hospitalDistMatrix[y][x] / maxHosp);
-
-                    const score = (
-                        userWeights.elevation * normElev +
-                        userWeights.slope * normSlope +
-                        userWeights.rainfall * normRain +
-                        userWeights.river * normRiver +
-                        userWeights.road * normRoad +
-                        userWeights.building * normBuild +
-                        userWeights.hospital * normHosp
-                    ) / 100.0;
-
-                    riskMatrix[y][x] = parseFloat(Math.max(0, Math.min(1.0, score)).toFixed(3));
-                }
+        // Calculate Slope from Elevation
+        for (let r = 0; r < GRID_SIZE; r++) {
+            const rowSlope = [];
+            for (let c = 0; c < GRID_SIZE; c++) {
+                let dx = (c < GRID_SIZE - 1 ? dataGrid.elevation[r][c+1] : dataGrid.elevation[r][c]) - dataGrid.elevation[r][c];
+                let dy = (r < GRID_SIZE - 1 ? dataGrid.elevation[r+1][c] : dataGrid.elevation[r][c]) - dataGrid.elevation[r][c];
+                let slp = Math.sqrt(dx*dx + dy*dy) * 2;
+                rowSlope.push(slp);
             }
-
-            // Calculate M1 Score
-            let diffSum = 0;
-            for (let key in OPTIMAL_WEIGHTS) {
-                diffSum += Math.abs(userWeights[key] - OPTIMAL_WEIGHTS[key]);
-            }
-            m1Score = Math.max(0, 100 - diffSum * 1.5);
-            updateScores();
-
-            // Re-render Heatmaps
-            renderRiskMap();
-            renderSiteSelectionMap();
+            dataGrid.slope.push(rowSlope);
         }
 
-        // Render 3D Surface Plot
-        function render3DTerrain() {
-            const data = [{
-                z: elevationMatrix,
-                x: gridX,
-                y: gridY,
-                type: 'surface',
-                colorscale: 'Viridis',
-                showscale: false
-            }];
-
-            const layout = {
-                margin: { l: 0, r: 0, b: 0, t: 0 },
-                paper_bgcolor: '#0f172a',
-                plot_bgcolor: '#0f172a',
-                scene: {
-                    xaxis: { title: 'X', color: '#94a3b8' },
-                    yaxis: { title: 'Y', color: '#94a3b8' },
-                    zaxis: { title: 'Elev (m)', color: '#94a3b8' },
-                    camera: { eye: { x: 1.4, y: 1.4, z: 1.2 } }
-                }
-            };
-
-            Plotly.newPlot('plotly-3d-terrain', data, layout, { responsive: true, displayModeBar: false });
-        }
-
-        // Render Risk Heatmap
-        function renderRiskMap() {
-            const data = [{
-                z: riskMatrix,
-                x: gridX,
-                y: gridY,
-                type: 'heatmap',
-                colorscale: 'Reds',
-                showscale: true,
-                colorbar: { tickfont: { color: '#94a3b8' } }
-            }];
-
-            const layout = {
-                margin: { l: 30, r: 10, b: 30, t: 10 },
-                paper_bgcolor: '#0f172a',
-                plot_bgcolor: '#0f172a',
-                xaxis: { color: '#94a3b8' },
-                yaxis: { color: '#94a3b8' }
-            };
-
-            Plotly.newPlot('plotly-risk-map', data, layout, { responsive: true, displayModeBar: false });
-        }
-
-        let activeSiteIndex = 1;
-
-        function renderSiteSelectionMap() {
-            const s1x = parseInt(document.getElementById('site1-x').value);
-            const s1y = parseInt(document.getElementById('site1-y').value);
-            const s2x = parseInt(document.getElementById('site2-x').value);
-            const s2y = parseInt(document.getElementById('site2-y').value);
-            const s3x = parseInt(document.getElementById('site3-x').value);
-            const s3y = parseInt(document.getElementById('site3-y').value);
-
-            const heatmapData = {
-                z: riskMatrix,
-                x: gridX,
-                y: gridY,
-                type: 'heatmap',
-                colorscale: 'Reds',
-                showscale: false
-            };
-
-            const hospitalTrace = {
-                x: [hospitalPos.x],
-                y: [hospitalPos.y],
-                mode: 'markers+text',
-                type: 'scatter',
-                name: 'Hospital',
-                text: ['🏥 Hospital'],
-                textposition: 'top center',
-                marker: { size: 14, color: '#f43f5e', symbol: 'cross' },
-                textfont: { color: '#f43f5e', size: 12, family: 'Outfit' }
-            };
-
-            const shelterTrace = {
-                x: [s1x, s2x, s3x],
-                y: [s1y, s2y, s3y],
-                mode: 'markers+text',
-                type: 'scatter',
-                name: 'Shelter Sites',
-                text: ['⭐ Site 1', '⭐ Site 2', '⭐ Site 3'],
-                textposition: 'top center',
-                marker: { size: 14, color: ['#10b981', '#06b6d4', '#f59e0b'], symbol: 'star' },
-                textfont: { color: '#ffffff', size: 12, family: 'Outfit' }
-            };
-
-            const layout = {
-                margin: { l: 30, r: 10, b: 30, t: 20 },
-                paper_bgcolor: '#0f172a',
-                plot_bgcolor: '#0f172a',
-                xaxis: { color: '#94a3b8', range: [-1, 50] },
-                yaxis: { color: '#94a3b8', range: [-1, 50] },
-                showlegend: false
-            };
-
-            Plotly.newPlot('plotly-site-map', [heatmapData, hospitalTrace, shelterTrace], layout, { responsive: true, displayModeBar: false });
-
-            // Add Click listener for picking coordinates
-            const mapEl = document.getElementById('plotly-site-map');
-            mapEl.on('plotly_click', function(data){
-                if (data.points && data.points.length > 0) {
-                    const clickX = Math.round(data.points[0].x);
-                    const clickY = Math.round(data.points[0].y);
-                    
-                    document.getElementById(`site${activeSiteIndex}-x`).value = clickX;
-                    document.getElementById(`site${activeSiteIndex}-y`).value = clickY;
-                    document.getElementById(`site${activeSiteIndex}-coord-badge`).innerText = `X: ${clickX}, Y: ${clickY}`;
-
-                    // Cycle to next site
-                    activeSiteIndex = (activeSiteIndex % 3) + 1;
-                    renderSiteSelectionMap();
-                }
-            });
-        }
-
-        function updateSiteMarkersFromInput() {
-            document.getElementById('site1-coord-badge').innerText = `X: ${document.getElementById('site1-x').value}, Y: ${document.getElementById('site1-y').value}`;
-            document.getElementById('site2-coord-badge').innerText = `X: ${document.getElementById('site2-x').value}, Y: ${document.getElementById('site2-y').value}`;
-            document.getElementById('site3-coord-badge').innerText = `X: ${document.getElementById('site3-x').value}, Y: ${document.getElementById('site3-y').value}`;
-            renderSiteSelectionMap();
-        }
-
-        function evaluateEvacuationSites() {
-            const sites = [
-                { x: parseInt(document.getElementById('site1-x').value), y: parseInt(document.getElementById('site1-y').value) },
-                { x: parseInt(document.getElementById('site2-x').value), y: parseInt(document.getElementById('site2-y').value) },
-                { x: parseInt(document.getElementById('site3-x').value), y: parseInt(document.getElementById('site3-y').value) }
-            ];
-
-            let siteScores = [];
-            sites.forEach(s => {
-                const risk = riskMatrix[s.y][s.x];
-                const roadAcc = 1.0 - (roadDistMatrix[s.y][s.x] / 30.0);
-                const hospProx = 1.0 - (hospitalDistMatrix[s.y][s.x] / 50.0);
-
-                const score = ((1.0 - risk) * 40.0) + (Math.max(0, roadAcc) * 30.0) + (Math.max(0, hospProx) * 30.0);
-                siteScores.push(score);
-            });
-
-            m2Score = siteScores.reduce((a, b) => a + b, 0) / 3.0;
-            updateScores();
-        }
-
-        let m1Score = 0.0;
-        let m2Score = 0.0;
-
-        function updateScores() {
-            document.getElementById('m1-score-display').innerText = `${m1Score.toFixed(1)} / 100`;
-            document.getElementById('m2-score-display').innerText = `${m2Score.toFixed(1)} / 100`;
-            document.getElementById('total-score-display').innerText = `${(m1Score + m2Score).toFixed(1)}`;
-            updateLeaderboard();
-        }
-
-        // Leaderboard Array
-        let leaderboard = [
-            { name: "HydroBot AI", m1: 92.0, m2: 88.5, total: 180.5 },
-            { name: "GeoMaster_Pro", m1: 85.0, m2: 82.0, total: 167.0 },
-            { name: "UrbanResilience", m1: 78.0, m2: 74.5, total: 152.5 }
-        ];
-
-        function updateLeaderboard() {
-            const teamName = document.getElementById('team-name-input').value || "Your Team";
-            const currentTotal = m1Score + m2Score;
-
-            let updatedList = [...leaderboard.filter(e => e.name !== teamName), {
-                name: teamName,
-                m1: parseFloat(m1Score.toFixed(1)),
-                m2: parseFloat(m2Score.toFixed(1)),
-                total: parseFloat(currentTotal.toFixed(1))
-            }];
-
-            updatedList.sort((a, b) => b.total - a.total);
-
-            const container = document.getElementById('leaderboard-list');
-            container.innerHTML = '';
-
-            updatedList.forEach((entry, idx) => {
-                const isUser = entry.name === teamName;
-                const rankBadge = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`;
-                
-                const card = document.createElement('div');
-                card.className = `p-2.5 rounded-xl border flex items-center justify-between text-xs transition ${
-                    isUser ? 'bg-sky-500/10 border-sky-500/50 shadow-sm' : 'bg-slate-900/60 border-slate-800'
-                }`;
-
-                card.innerHTML = `
-                    <div class="flex items-center gap-2">
-                        <span class="font-mono text-sm">${rankBadge}</span>
-                        <div>
-                            <div class="font-bold text-slate-200 ${isUser ? 'text-sky-300' : ''}">${entry.name}</div>
-                            <div class="text-[10px] text-slate-400">M1: ${entry.m1} | M2: ${entry.m2}</div>
-                        </div>
-                    </div>
-                    <div class="font-mono font-extrabold text-sm ${isUser ? 'text-yellow-300' : 'text-slate-300'}">
-                        ${entry.total}
-                    </div>
-                `;
-                container.appendChild(card);
-            });
-        }
-
-        // Tab Switcher
-        function switchTab(tab) {
-            document.querySelectorAll('.tab-page').forEach(el => el.classList.add('hidden'));
-            document.querySelectorAll('.tab-btn').forEach(btn => {
-                btn.className = "tab-btn flex-1 min-w-[140px] py-2.5 px-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2 text-slate-400 hover:text-white hover:bg-slate-800 transition";
-            });
-
-            document.getElementById(`tab-content-${tab}`).classList.remove('hidden');
-            document.getElementById(`tab-content-${tab}`).classList.add('flex');
-
-            const activeBtn = document.getElementById(`tab-btn-${tab}`);
-            if (tab === 'm1') activeBtn.className = "tab-btn flex-1 min-w-[140px] py-2.5 px-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-md";
-            if (tab === 'm2') activeBtn.className = "tab-btn flex-1 min-w-[140px] py-2.5 px-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-md";
-            if (tab === 'ai') activeBtn.className = "tab-btn flex-1 min-w-[140px] py-2.5 px-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-md";
-        }
-
-        // Countdown Timer Logic
-        let timerSeconds = 900; // 15 mins
+        // 2. Timer Setup (20 Minutes)
+        let timeLeft = 20 * 60;
+        const timerEl = document.getElementById("timer");
         setInterval(() => {
-            if (timerSeconds > 0) {
-                timerSeconds--;
-                const m = Math.floor(timerSeconds / 60).toString().padStart(2, '0');
-                const s = (timerSeconds % 60).toString().padStart(2, '0');
-                document.getElementById('countdown-timer').innerText = `${m}:${s}`;
+            if (timeLeft > 0) {
+                timeLeft--;
+                const m = Math.floor(timeLeft / 60).toString().padStart(2, '0');
+                const s = (timeLeft % 60).toString().padStart(2, '0');
+                timerEl.innerText = `${m}:${s}`;
             }
         }, 1000);
 
-        // Gemini API Chat Integration
-        async function sendChatMessage() {
-            const inputEl = document.getElementById('chat-input');
-            const query = inputEl.value.trim();
-            if (!query) return;
+        // 3. Weight Calculations
+        function updateWeights() {
+            const e = parseInt(document.getElementById("w-elev").value);
+            const s = parseInt(document.getElementById("w-slope").value);
+            const ra = parseInt(document.getElementById("w-rain").value);
+            const ri = parseInt(document.getElementById("w-river").value);
 
-            const chatMessages = document.getElementById('chat-messages');
+            document.getElementById("val-elev").innerText = e + "%";
+            document.getElementById("val-slope").innerText = s + "%";
+            document.getElementById("val-rain").innerText = ra + "%";
+            document.getElementById("val-river").innerText = ri + "%";
 
-            // Render User Message
-            const userMsgDiv = document.createElement('div');
-            userMsgDiv.className = 'flex gap-3 justify-end';
-            userMsgDiv.innerHTML = `
-                <div class="bg-indigo-600/90 text-white p-3.5 rounded-2xl rounded-tr-none text-xs leading-relaxed max-w-[85%] shadow">
-                    ${query}
-                </div>
-            `;
-            chatMessages.appendChild(userMsgDiv);
-            inputEl.value = '';
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-
-            // Loading AI State
-            const loadingDiv = document.createElement('div');
-            loadingDiv.className = 'flex gap-3 max-w-[85%]';
-            loadingDiv.id = 'ai-loading';
-            loadingDiv.innerHTML = `
-                <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white text-xs font-bold shrink-0">AI</div>
-                <div class="bg-slate-800 p-3.5 rounded-2xl rounded-tl-none border border-slate-700/60 text-xs text-slate-400 animate-pulse flex items-center gap-2">
-                    <i class="fa-solid fa-spinner fa-spin"></i> Analyzing spatial hydro-geomorphology...
-                </div>
-            `;
-            chatMessages.appendChild(loadingDiv);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-
-            // Gemini API Call
-            const systemInstruction = `You are GeoAI Assistant, a world-class spatial data scientist and hydro-geomorphology expert teaching university students AI in Geography and Flood Site Selection. 
-            User's current factor weights: Elevation=${userWeights.elevation}%, Slope=${userWeights.slope}%, Rainfall=${userWeights.rainfall}%, River=${userWeights.river}%, Road=${userWeights.road}%, Building=${userWeights.building}%, Hospital=${userWeights.hospital}%.
-            Explain spatial concepts clearly, encouragingly, and scientifically in 2-3 short paragraphs.`;
-
-            const apiKey = ""; // API key populated dynamically at runtime
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
-
-            try {
-                const response = await fetch(apiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{ parts: [{ text: query }] }],
-                        systemInstruction: { parts: [{ text: systemInstruction }] }
-                    })
-                });
-
-                const data = await response.json();
-                document.getElementById('ai-loading').remove();
-
-                let aiResponseText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-                if (!aiResponseText) {
-                    aiResponseText = "Elevation and Slope carry high weights because water naturally accumulates in low-lying and flat terrain. Proximity to rivers represents direct overbank flooding hazard during intense rain events.";
-                }
-
-                const aiMsgDiv = document.createElement('div');
-                aiMsgDiv.className = 'flex gap-3 max-w-[85%]';
-                aiMsgDiv.innerHTML = `
-                    <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white text-xs font-bold shrink-0">AI</div>
-                    <div class="bg-slate-800 p-3.5 rounded-2xl rounded-tl-none border border-slate-700/60 text-xs text-slate-200 leading-relaxed shadow">
-                        ${aiResponseText.replace(/\n/g, '<br>')}
-                    </div>
-                `;
-                chatMessages.appendChild(aiMsgDiv);
-
-            } catch (err) {
-                document.getElementById('ai-loading').remove();
-                const errorMsgDiv = document.createElement('div');
-                errorMsgDiv.className = 'flex gap-3 max-w-[85%]';
-                errorMsgDiv.innerHTML = `
-                    <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white text-xs font-bold shrink-0">AI</div>
-                    <div class="bg-slate-800 p-3.5 rounded-2xl rounded-tl-none border border-slate-700/60 text-xs text-slate-200 leading-relaxed shadow">
-                        <strong>GeoAI Insight:</strong> Lower elevation and flat slope parameters are critical for surface water pooling, while river distance represents direct overbank exposure. Ensure your total factor weights balance physical hazards with infrastructure access!
-                    </div>
-                `;
-                chatMessages.appendChild(errorMsgDiv);
+            const total = e + s + ra + ri;
+            const statusEl = document.getElementById("weight-status");
+            statusEl.innerText = `Total Weight: ${total}%`;
+            
+            if (total === 100) {
+                statusEl.className = "mt-4 p-2 rounded-lg text-center font-bold text-sm bg-emerald-900/50 text-emerald-400 border border-emerald-500";
+            } else {
+                statusEl.className = "mt-4 p-2 rounded-lg text-center font-bold text-sm bg-amber-900/50 text-amber-400 border border-amber-500";
             }
-
-            chatMessages.scrollTop = chatMessages.scrollHeight;
         }
 
-        // Initialize App On Load
-        window.onload = function() {
-            generateSyntheticData();
-            calculateFloodRisk();
-            render3DTerrain();
-            updateLeaderboard();
-        };
+        function calculateMission1() {
+            const e = parseInt(document.getElementById("w-elev").value);
+            const s = parseInt(document.getElementById("w-slope").value);
+            const ra = parseInt(document.getElementById("w-rain").value);
+            const ri = parseInt(document.getElementById("w-river").value);
+
+            if (e + s + ra + ri !== 100) {
+                alert("Weights must total exactly 100%!");
+                return;
+            }
+
+            // Normalization & Risk Computation
+            dataGrid.calculatedRisk = [];
+            for (let r = 0; r < GRID_SIZE; r++) {
+                const rowRisk = [];
+                for (let c = 0; c < GRID_SIZE; c++) {
+                    let normElev = 1 - (dataGrid.elevation[r][c] / 200);
+                    let normSlope = 1 - Math.min(1, dataGrid.slope[r][c] / 50);
+                    let normRain = dataGrid.rainfall[r][c] / 350;
+                    let normRiver = 1 - Math.min(1, dataGrid.riverDist[r][c] / 30);
+
+                    let risk = (e*normElev + s*normSlope + ra*normRain + ri*normRiver) / 100.0;
+                    rowRisk.push(risk);
+                }
+                dataGrid.calculatedRisk.push(rowRisk);
+            }
+
+            // Optimal Baseline Weights: Elev 35%, Slope 20%, Rain 25%, River 20%
+            const diff = Math.abs(e - 35) + Math.abs(s - 20) + Math.abs(ra - 25) + Math.abs(ri - 20);
+            const score = Math.max(0, 100 - diff * 1.2).toFixed(1);
+            
+            document.getElementById("m1-score").innerText = score;
+            updateTotalScore();
+            
+            document.getElementById("layer-select").value = "risk";
+            renderSelectedLayer();
+        }
+
+        function calculateMission2() {
+            if (!dataGrid.calculatedRisk) {
+                alert("Please calculate the Flood Risk Map in Mission 1 first!");
+                return;
+            }
+
+            const s1 = [parseInt(document.getElementById("s1-x").value), parseInt(document.getElementById("s1-y").value)];
+            const s2 = [parseInt(document.getElementById("s2-x").value), parseInt(document.getElementById("s2-y").value)];
+            const s3 = [parseInt(document.getElementById("s3-x").value), parseInt(document.getElementById("s3-y").value)];
+
+            const sites = [s1, s2, s3];
+            let totalSiteScore = 0;
+
+            sites.forEach(([x, y]) => {
+                let risk = dataGrid.calculatedRisk[y][x];
+                let score = (1.0 - risk) * 100;
+                totalSiteScore += score;
+            });
+
+            const m2Score = (totalSiteScore / 3.0).toFixed(1);
+            document.getElementById("m2-score").innerText = m2Score;
+            updateTotalScore();
+            renderSelectedLayer();
+        }
+
+        function updateTotalScore() {
+            const m1 = parseFloat(document.getElementById("m1-score").innerText);
+            const m2 = parseFloat(document.getElementById("m2-score").innerText);
+            document.getElementById("total-score").innerText = (m1 + m2).toFixed(1);
+        }
+
+        // 4. Map Rendering
+        function renderSelectedLayer() {
+            const layerKey = document.getElementById("layer-select").value;
+            let zData, title, colorscale;
+
+            if (layerKey === "risk") {
+                zData = dataGrid.calculatedRisk || dataGrid.elevation;
+                title = dataGrid.calculatedRisk ? "Calculated Flood Risk Level (0 = Safe, 1 = High Risk)" : "Elevation Preview (Run M1 First)";
+                colorscale = "Reds";
+            } else if (layerKey === "elevation") {
+                zData = dataGrid.elevation;
+                title = "Layer 1: Topographic Elevation (m)";
+                colorscale = "Viridis";
+            } else if (layerKey === "slope") {
+                zData = dataGrid.slope;
+                title = "Layer 2: Slope Gradient (%)";
+                colorscale = "YlOrRd";
+            } else if (layerKey === "rainfall") {
+                zData = dataGrid.rainfall;
+                title = "Layer 3: Rainfall Intensity Distribution (mm)";
+                colorscale = "Blues";
+            } else if (layerKey === "river") {
+                zData = dataGrid.riverDist;
+                title = "Layer 4: Proximity Distance to Main River (m)";
+                colorscale = "Cividis";
+            }
+
+            const trace = {
+                z: zData,
+                type: 'heatmap',
+                colorscale: colorscale
+            };
+
+            const layout = {
+                title: { text: title, font: { color: '#f8fafc', size: 14 } },
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: 'rgba(0,0,0,0)',
+                margin: { t: 40, r: 20, l: 40, b: 40 },
+                xaxis: { title: 'X Coordinate', color: '#94a3b8' },
+                yaxis: { title: 'Y Coordinate', color: '#94a3b8' }
+            };
+
+            Plotly.newPlot('map-plot', [trace], layout);
+        }
+
+        // 5. Leaderboard Management
+        const leaderboardData = [];
+        function saveToLeaderboard() {
+            const team = document.getElementById("team-name-input").value;
+            const m1 = document.getElementById("m1-score").innerText;
+            const m2 = document.getElementById("m2-score").innerText;
+            const total = document.getElementById("total-score").innerText;
+
+            leaderboardData.push({ team, m1, m2, total });
+            leaderboardData.sort((a, b) => b.total - a.total);
+
+            const tbody = document.getElementById("leaderboard-body");
+            tbody.innerHTML = leaderboardData.map(item => `
+                <tr class="border-b border-slate-700/50">
+                    <td class="py-2 font-medium">${item.team}</td>
+                    <td class="text-center">${item.m1}</td>
+                    <td class="text-center">${item.m2}</td>
+                    <td class="text-right font-bold text-sky-400">${item.total}</td>
+                </tr>
+            `).join('');
+        }
+
+        // 6. AI Globe Chatbot Functions
+        function toggleChat() {
+            const chat = document.getElementById("chat-popup");
+            chat.style.display = chat.style.display === "flex" ? "none" : "flex";
+        }
+
+        async function sendChatMessage() {
+            const input = document.getElementById("chat-input");
+            const text = input.value.trim();
+            if (!text) return;
+
+            const msgContainer = document.getElementById("chat-messages");
+            msgContainer.innerHTML += `<div class="bg-sky-600 p-3 rounded-xl text-white ml-auto max-w-[85%]">${text}</div>`;
+            input.value = "";
+            msgContainer.scrollTop = msgContainer.scrollHeight;
+
+            // Simulated AI Response with Hydro-geomorphological context
+            setTimeout(() => {
+                let response = "Elevation and Slope carry the most significance because water naturally pools in low, flat terrain. River proximity directly indicates overbank flood hazard!";
+                if (text.toLowerCase().includes("risk") || text.toLowerCase().includes("30%")) {
+                    response = "Assigning high weight to flood risk ensures shelters are built outside floodplains. A 30% weight reflects strong priority on safety without ignoring accessibility!";
+                }
+                msgContainer.innerHTML += `<div class="bg-slate-700 p-3 rounded-xl text-slate-200 max-w-[85%]">🌎 ${response}</div>`;
+                msgContainer.scrollTop = msgContainer.scrollHeight;
+            }, 600);
+        }
+
+        // Initial Load
+        renderSelectedLayer();
     </script>
 </body>
 </html>
