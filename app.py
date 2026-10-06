@@ -1,350 +1,458 @@
-
-import os, time, uuid, json
-from pathlib import Path
+import os
+import time
 import numpy as np
 import pandas as pd
-import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
-import requests
+import pydeck as pdk
+import streamlit as st
+from openai import OpenAI
 
-st.set_page_config(page_title="GeoAI Site Selection Challenge", page_icon="🌍", layout="wide")
+# ==========================================
+# 1. PAGE CONFIGURATION & STYLING (Kahoot Style)
+# ==========================================
+st.set_page_config(
+    page_title="AI Site Selection Challenge",
+    page_icon="🌊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# =========================
-# Live classroom backend
-# =========================
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
-ROOM = st.query_params.get("room", "GEOCITY")
-SESSION_ID = st.session_state.setdefault("session_id", str(uuid.uuid4()))
+st.markdown(
+    """
+    <style>
+    .main-title {
+        font-size: 2.5rem;
+        font-weight: 800;
+        color: #4A90E2;
+        text-align: center;
+        margin-bottom: 0px;
+    }
+    .sub-title {
+        font-size: 1.2rem;
+        text-align: center;
+        color: #7B889B;
+        margin-bottom: 20px;
+    }
+    .score-card {
+        background-color: #1E293B;
+        border-radius: 10px;
+        padding: 15px;
+        text-align: center;
+        border: 2px solid #334155;
+    }
+    .metric-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #38BDF8;
+    }
+    </style>
+""",
+    unsafe_allow_html=True,
+)
 
-def sb_headers():
-    return {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type":"application/json", "Prefer":"return=representation"}
+# Initialize Session State
+if "team_name" not in st.state_dict():
+    st.session_state.team_name = "Team Explorer"
+if "m1_score" not in st.state_dict():
+    st.session_state.m1_score = 0.0
+if "m2_score" not in st.state_dict():
+    st.session_state.m2_score = 0.0
+if "chat_history" not in st.state_dict():
+    st.session_state.chat_history = []
+if "start_time" not in st.state_dict():
+    st.session_state.start_time = time.time()
 
-def sb_get(table, params=""):
-    if not (SUPABASE_URL and SUPABASE_KEY): return []
-    try:
-        r=requests.get(f"{SUPABASE_URL}/rest/v1/{table}?{params}", headers=sb_headers(), timeout=8)
-        r.raise_for_status(); return r.json()
-    except Exception:
-        return []
+# ==========================================
+# 2. SYNTHETIC SPATIAL DATA GENERATION (50x50 Grid)
+# ==========================================
+@st.cache_data
+def generate_spatial_data():
+    grid_size = 50
+    x = np.linspace(0, 49, grid_size)
+    y = np.linspace(0, 49, grid_size)
+    X, Y = np.meshgrid(x, y)
 
-def sb_post(table, payload):
-    if not (SUPABASE_URL and SUPABASE_KEY): return []
-    try:
-        r=requests.post(f"{SUPABASE_URL}/rest/v1/{table}", headers=sb_headers(), json=payload, timeout=8)
-        r.raise_for_status(); return r.json()
-    except Exception:
-        return []
+    # Elevation (m): High on left/top, low in center valley
+    Elevation = 150 - (
+        np.sqrt((X - 25) ** 2 + (Y - 25) ** 2) * 2.5 + np.sin(X / 5) * 10
+    )
+    Elevation = np.clip(Elevation, 10, 200)
 
-def sb_patch(table, params, payload):
-    if not (SUPABASE_URL and SUPABASE_KEY): return []
-    try:
-        r=requests.patch(f"{SUPABASE_URL}/rest/v1/{table}?{params}", headers=sb_headers(), json=payload, timeout=8)
-        r.raise_for_status(); return r.json()
-    except Exception:
-        return []
+    # Slope (%): Gradient of elevation
+    dy, dx = np.gradient(Elevation)
+    Slope = np.sqrt(dx**2 + dy**2) * 2
 
-def live_mode():
-    return bool(SUPABASE_URL and SUPABASE_KEY)
+    # Rainfall (mm): High rainfall gradient towards top-right
+    Rainfall = 150 + X * 2 + Y * 3 + np.random.normal(0, 5, (grid_size, grid_size))
 
-# =========================
-# User / room registration
-# =========================
-st.title("🌍 GeoAI Site Selection Challenge")
-if "name" not in st.session_state:
-    st.session_state.name = ""
+    # River Path: Bisecting diagonally
+    River_Dist = np.abs(Y - (0.8 * X + 5))
 
-if not st.session_state.name:
-    st.subheader("Join the classroom")
-    name = st.text_input("Your name", placeholder="e.g., Parichat")
-    room = st.text_input("Room code", value=ROOM)
-    if st.button("🚀 Join", type="primary") and name.strip():
-        st.session_state.name=name.strip()
-        st.query_params["room"]=room.strip().upper()
-        st.rerun()
-    st.stop()
+    # Road Network: Two intersecting main corridors
+    Road_Dist = np.minimum(np.abs(X - 20), np.abs(Y - 30))
 
-ROOM = st.query_params.get("room", ROOM).upper()
+    # Building Density (0 to 1)
+    Building = np.exp(-((X - 30) ** 2 + (Y - 20) ** 2) / 200) + np.exp(
+        -((X - 10) ** 2 + (Y - 40) ** 2) / 150
+    )
+    Building = np.clip(Building, 0, 1)
 
-# Register / heartbeat
-now=int(time.time())
-if live_mode():
-    existing=sb_get("participants", f"room=eq.{ROOM}&session_id=eq.{SESSION_ID}")
-    payload={"room":ROOM,"session_id":SESSION_ID,"name":st.session_state.name,
-             "last_seen":now,"mission":int(st.session_state.get("mission",1)),
-             "completed_m1":bool(st.session_state.get("completed_m1",False))}
-    if existing:
-        sb_patch("participants", f"room=eq.{ROOM}&session_id=eq.{SESSION_ID}", payload)
-    else:
-        sb_post("participants", payload)
-    active=sb_get("participants", f"room=eq.{ROOM}&last_seen=gt.{now-15}&select=name,mission,completed_m1")
-else:
-    active=[]
+    # Hospital Location at Grid (35, 35)
+    Hospital_X, Hospital_Y = 35, 35
+    Hospital_Dist = np.sqrt((X - Hospital_X) ** 2 + (Y - Hospital_Y) ** 2)
 
+    return {
+        "X": X,
+        "Y": Y,
+        "Elevation": Elevation,
+        "Slope": Slope,
+        "Rainfall": Rainfall,
+        "River_Dist": River_Dist,
+        "Road_Dist": Road_Dist,
+        "Building": Building,
+        "Hospital_Dist": Hospital_Dist,
+        "Hospital_Pos": (Hospital_X, Hospital_Y),
+    }
+
+
+data = generate_spatial_data()
+
+# Optimal Expert Weights for Benchmark
+OPTIMAL_WEIGHTS = {
+    "Elevation": 25,
+    "Slope": 15,
+    "Rainfall": 20,
+    "River_Dist": 20,
+    "Road_Dist": 5,
+    "Building": 10,
+    "Hospital_Dist": 5,
+}
+
+# ==========================================
+# 3. SIDEBAR: GAME DASHBOARD & LEADERBOARD
+# ==========================================
 with st.sidebar:
-    st.success(f"👤 {st.session_state.name}")
-    st.caption(f"Room: **{ROOM}**")
-    if live_mode():
-        st.metric("🟢 Students online", len(active))
-        names=[x["name"] for x in active]
-        st.caption("Online now: " + ", ".join(names[:12]))
-    else:
-        st.warning("Demo mode: add SUPABASE_URL and SUPABASE_KEY for live classroom mode.")
-        st.metric("Students online", 1)
+    st.image(
+        "https://img.icons8.com/isometric-folders/100/globe-earth.png", width=80
+    )
+    st.title("🎮 Game Control")
+    st.session_state.team_name = st.text_input(
+        "Team Name", st.session_state.team_name
+    )
 
-    completed=st.session_state.get("completed_m1",False)
-    mission_options=["1 · Flood Factor Challenge"] + (["2 · Evacuation Center Challenge"] if completed else [])
-    mission=st.radio("Mission",mission_options)
-    st.session_state.mission=1 if mission.startswith("1") else 2
-    if not completed:
-        st.caption("🔒 Mission 2 unlocks after Mission 1 is completed.")
+    # Countdown Timer (15 Minutes Challenge)
+    elapsed = int(time.time() - st.session_state.start_time)
+    remaining = max(0, 900 - elapsed)
+    mins, secs = divmod(remaining, 60)
+    st.metric("⏳ Time Remaining", f"{mins:02d}:{secs:02d}")
 
-# =========================
-# Real-data loader
-# =========================
-st.divider()
-st.subheader("🗺️ Real-data study area")
+    st.markdown("---")
+    st.subheader("🏆 Live Leaderboard")
+    leaderboard_data = pd.DataFrame(
+        [
+            {
+                "Team": st.session_state.team_name,
+                "M1": round(st.session_state.m1_score, 1),
+                "M2": round(st.session_state.m2_score, 1),
+                "Total": round(
+                    st.session_state.m1_score + st.session_state.m2_score, 1
+                ),
+            },
+            {"Team": "HydroBot AI", "M1": 92.0, "M2": 88.5, "Total": 180.5},
+            {"Team": "GeoMaster", "M1": 85.0, "M2": 82.0, "Total": 167.0},
+            {"Team": "UrbanPlanner_01", "M1": 78.0, "M2": 74.5, "Total": 152.5},
+        ]
+    ).sort_values(by="Total", ascending=False)
 
-with st.expander("Data setup / instructor panel", expanded=False):
-    st.markdown("""
-**Default study area: Bangkok, Thailand.** The app is designed for real spatial data rather than a synthetic grid.
+    st.dataframe(leaderboard_data, hide_index=True, use_container_width=True)
 
-Upload a real **GeoTIFF DEM** and optionally GeoTIFF rainfall/flood-hazard rasters. Vector layers can be loaded from GeoJSON. 
-For a live class, prepare the same files on the instructor machine or host them at stable URLs.
+# ==========================================
+# 4. MAIN CONTENT HEADER
+# ==========================================
+st.markdown(
+    '<div class="main-title">🌊 AI Site Selection Challenge</div>',
+    unsafe_allow_html=True,
+)
+st.markdown(
+    '<div class="sub-title">Spatial AI in Action: Flood Risk Mapping & Evacuation Planning</div>',
+    unsafe_allow_html=True,
+)
 
-Recommended layers:
-- `DEM.tif` — elevation
-- `Rainfall.tif` — event rainfall or climatology
-- `FloodHazard.tif` — observed/modelled flood hazard (optional)
-- `waterways.geojson`
-- `roads.geojson`
-- `hospitals.geojson`
-- `buildings.geojson`
+col_score1, col_score2, col_score3 = st.columns(3)
+with col_score1:
+    st.markdown(
+        f'<div class="score-card">Mission 1 Score<div class="metric-value">{st.session_state.m1_score:.1f} / 100</div></div>',
+        unsafe_allow_html=True,
+    )
+with col_score2:
+    st.markdown(
+        f'<div class="score-card">Mission 2 Score<div class="metric-value">{st.session_state.m2_score:.1f} / 100</div></div>',
+        unsafe_allow_html=True,
+    )
+with col_score3:
+    total_sc = st.session_state.m1_score + st.session_state.m2_score
+    st.markdown(
+        f'<div class="score-card">Total Score<div class="metric-value">{total_sc:.1f} / 200</div></div>',
+        unsafe_allow_html=True,
+    )
 
-The OSM Overpass API can also be used to fetch Bangkok waterways/roads/hospitals, but public services may rate-limit classroom traffic.
-""")
-    dem_file=st.file_uploader("Upload real DEM GeoTIFF", type=["tif","tiff"], key="dem")
-    rain_file=st.file_uploader("Upload real rainfall GeoTIFF (optional)", type=["tif","tiff"], key="rain")
-    flood_file=st.file_uploader("Upload real flood-hazard GeoTIFF (optional)", type=["tif","tiff"], key="flood")
-    geo_files=st.file_uploader("Upload real GeoJSON layers", type=["geojson","json"], accept_multiple_files=True, key="geo")
+st.markdown("---")
 
-if dem_file is None:
-    st.info("For the real-data version, upload the instructor's Bangkok DEM GeoTIFF. The app will not silently fall back to simulated geography.")
-    st.stop()
+tab1, tab2, tab3 = st.tabs(
+    [
+        "🎯 Mission 1: Flood Risk Weights",
+        "📍 Mission 2: Evacuation Sites",
+        "🤖 Chat with AI Advisor",
+    ]
+)
 
-try:
-    import rasterio
-    from rasterio.transform import rowcol
-    import geopandas as gpd
-except Exception as e:
-    st.error("Install rasterio and geopandas from requirements.txt.")
-    st.stop()
+# ==========================================
+# 5. TAB 1: MISSION 1 - WEIGHT CONFIGURATION & 3D MAP
+# ==========================================
+with tab1:
+    st.header("Mission 1: Multi-Criteria Flood Risk Weighting")
+    st.write(
+        "Assign weights (%) to each flood factor. Total weights must equal **100%**."
+    )
 
-def read_raster(uploaded):
-    import tempfile
-    suffix=".tif"
-    tmp=Path(tempfile.gettempdir())/(str(uuid.uuid4())+suffix)
-    tmp.write_bytes(uploaded.getvalue())
-    src=rasterio.open(tmp)
-    arr=src.read(1).astype("float32")
-    nodata=src.nodata
-    if nodata is not None: arr[arr==nodata]=np.nan
-    return src,arr
+    c1, c2 = st.columns([1, 2])
 
-dem_src, dem = read_raster(dem_file)
-rain_src, rain = read_raster(rain_file) if rain_file else (None,None)
-flood_src, flood = read_raster(flood_file) if flood_file else (None,None)
+    with c1:
+        st.subheader("⚙️ Factor Weights")
+        w_elev = st.slider("Elevation (Low Elev = High Risk)", 0, 50, 25)
+        w_slope = st.slider("Slope (Flat = High Risk)", 0, 50, 15)
+        w_rain = st.slider("Rainfall Intensity", 0, 50, 20)
+        w_river = st.slider("Proximity to River", 0, 50, 20)
+        w_road = st.slider("Proximity to Road", 0, 30, 5)
+        w_build = st.slider("Building Density", 0, 30, 10)
+        w_hosp = st.slider("Distance to Hospital", 0, 30, 5)
 
-# Make a manageable display sample from real DEM.
-def sample_raster(arr, src, max_points=8000):
-    h,w=arr.shape
-    step=max(1,int(np.sqrt(h*w/max_points)))
-    rows=np.arange(0,h,step); cols=np.arange(0,w,step)
-    rr,cc=np.meshgrid(rows,cols,indexing="ij")
-    vals=arr[rr,cc]
-    ok=np.isfinite(vals)
-    xs,ys=rasterio.transform.xy(src.transform, rr[ok], cc[ok])
-    return pd.DataFrame({"lon":xs,"lat":ys,"value":vals[ok]})
+        total_w = (
+            w_elev + w_slope + w_rain + w_river + w_road + w_build + w_hosp
+        )
 
-dem_df=sample_raster(dem,dem_src)
-if dem_df.empty:
-    st.error("The DEM has no readable numeric cells."); st.stop()
-
-# Real GeoJSON layers
-geo_layers={}
-for gf in geo_files or []:
-    try:
-        gdf=gpd.read_file(gf)
-        geo_layers[gf.name]=gdf
-    except Exception as e:
-        st.warning(f"Could not read {gf.name}: {e}")
-
-layer_name=st.selectbox("Display real-data layer", ["DEM"] + list(geo_layers.keys()))
-if layer_name=="DEM":
-    fig=px.scatter(dem_df,x="lon",y="lat",color="value",color_continuous_scale="Turbo",
-                   title="Real DEM — Bangkok study area")
-    fig.update_traces(marker_size=4)
-else:
-    gdf=geo_layers[layer_name].to_crs(4326)
-    fig=px.scatter_geo(gdf, lon=gdf.geometry.centroid.x, lat=gdf.geometry.centroid.y,
-                       title=f"Real GeoJSON — {layer_name}")
-st.plotly_chart(fig,use_container_width=True)
-
-# =========================
-# Mission 1
-# =========================
-if mission.startswith("1"):
-    st.header("🌧 Mission 1 — AI Flood Factor Challenge")
-    st.write("Use real spatial layers to decide which factors should receive the greatest weight.")
-
-    available=["Elevation (DEM)"]
-    if rain_file: available.append("Rainfall raster")
-    if flood_file: available.append("Flood-hazard raster")
-    available += list(geo_layers.keys())
-
-    st.write("### 1. Your hypothesis")
-    ranking=st.multiselect("Rank the factors you think are most important", available)
-
-    if st.button("🤖 Analyze real-data relationships", type="primary"):
-        if flood is not None:
-            # Compare raster cells after resampling flood raster to DEM grid.
-            from rasterio.warp import reproject, Resampling
-            aligned=np.full(dem.shape,np.nan,dtype="float32")
-            reproject(flood, aligned, src_transform=flood_src.transform, src_crs=flood_src.crs,
-                      dst_transform=dem_src.transform, dst_crs=dem_src.crs, resampling=Resampling.bilinear)
-            d=pd.DataFrame({"Elevation":dem.ravel(),"FloodHazard":aligned.ravel()}).dropna()
-            corr=abs(d.corr(numeric_only=True)["FloodHazard"].drop("FloodHazard"))
-            if len(corr):
-                out=corr/corr.sum()
-                st.session_state["importance"]=out.sort_values(ascending=False)
+        if total_w != 100:
+            st.warning(f"⚠️ Total Weight: **{total_w}%** (Must be 100%)")
         else:
-            st.warning("Upload a real FloodHazard.tif to estimate factor importance against observed/modelled flood hazard. The app will not invent a flood target.")
-            st.session_state["importance"]=None
+            st.success("✅ Total Weight: **100%**")
 
-    if "importance" in st.session_state and st.session_state["importance"] is not None:
-        imp=st.session_state["importance"]
-        st.dataframe(pd.DataFrame({"Factor":imp.index,"Absolute correlation share":imp.values})
-                     .style.format({"Absolute correlation share":"{:.0%}"}),hide_index=True)
-        st.info("This is an exploratory association, not causal proof. For a richer model, add rainfall, distance-to-water, land cover, drainage and other real layers.")
-        if ranking:
-            user_names=ranking
-            st.write("**Your ranking:**", " → ".join(user_names))
-        if st.button("✅ Complete Mission 1"):
-            st.session_state.completed_m1=True
-            if live_mode():
-                sb_patch("participants",f"room=eq.{ROOM}&session_id=eq.{SESSION_ID}",
-                         {"completed_m1":True,"mission":2,"last_seen":int(time.time())})
-            st.success("Mission 1 complete — Mission 2 is now unlocked.")
+        if st.button("🚀 Calculate Flood Risk Map", use_container_width=True):
+            # Calculate Risk Matrix Normalized 0..1
+            norm_elev = 1 - (
+                data["Elevation"] - data["Elevation"].min()
+            ) / (data["Elevation"].max() - data["Elevation"].min())
+            norm_slope = 1 - (data["Slope"] - data["Slope"].min()) / (
+                data["Slope"].max() - data["Slope"].min()
+            )
+            norm_rain = (data["Rainfall"] - data["Rainfall"].min()) / (
+                data["Rainfall"].max() - data["Rainfall"].min()
+            )
+            norm_river = 1 - (
+                data["River_Dist"] - data["River_Dist"].min()
+            ) / (data["River_Dist"].max() - data["River_Dist"].min())
+            norm_road = (data["Road_Dist"] - data["Road_Dist"].min()) / (
+                data["Road_Dist"].max() - data["Road_Dist"].min()
+            )
+            norm_build = data["Building"]
+            norm_hosp = (data["Hospital_Dist"] - data["Hospital_Dist"].min()) / (
+                data["Hospital_Dist"].max() - data["Hospital_Dist"].min()
+            )
+
+            risk_map = (
+                w_elev * norm_elev
+                + w_slope * norm_slope
+                + w_rain * norm_rain
+                + w_river * norm_river
+                + w_road * norm_road
+                + w_build * norm_build
+                + w_hosp * norm_hosp
+            ) / 100.0
+
+            st.session_state["risk_map"] = risk_map
+
+            # Calculate M1 Score
+            user_w = {
+                "Elevation": w_elev,
+                "Slope": w_slope,
+                "Rainfall": w_rain,
+                "River_Dist": w_river,
+                "Road_Dist": w_road,
+                "Building": w_build,
+                "Hospital_Dist": w_hosp,
+            }
+            diff = sum(
+                abs(user_w[k] - OPTIMAL_WEIGHTS[k]) for k in OPTIMAL_WEIGHTS
+            )
+            st.session_state.m1_score = max(0.0, 100.0 - diff * 1.5)
             st.rerun()
 
-# =========================
-# Mission 2
-# =========================
-else:
-    st.header("🚨 Mission 2 — Real-data Evacuation Center Challenge")
-    st.write("Select a real candidate location using transparent multi-criteria spatial decision analysis.")
+    with c2:
+        st.subheader("🌋 3D Terrain & Calculated Risk Map")
 
-    if not st.session_state.get("completed_m1",False):
-        st.error("Mission 2 is locked until Mission 1 is completed.")
-        st.stop()
+        # 3D Surface Plot of Terrain Elevation
+        fig_3d = go.Figure(
+            data=[
+                go.Surface(
+                    z=data["Elevation"],
+                    x=data["X"],
+                    y=data["Y"],
+                    colorscale="Viridis",
+                )
+            ]
+        )
+        fig_3d.update_layout(
+            title="3D Elevation Surface (Topography)",
+            autosize=True,
+            height=350,
+            margin=dict(l=0, r=0, b=0, t=30),
+        )
+        st.plotly_chart(fig_3d, use_container_width=True)
 
-    st.subheader("1. Define priorities")
-    st.write("Set the weights for the real-data criteria available in your uploaded layers.")
-    criteria=["Flood safety","Elevation","Road accessibility","Population coverage","Hospital accessibility"]
-    defaults=[35,20,20,15,10]
-    vals=[]
-    cols=st.columns(5)
-    for c,label,val in zip(cols,criteria,defaults):
-        vals.append(c.slider(label,0,100,val,1))
-    total=sum(vals)
-    weights=np.array(vals)/total if total else np.zeros(5)
-    st.caption(f"Normalized weights: {np.round(weights*100).astype(int).tolist()}%")
+        if "risk_map" in st.session_state:
+            fig_risk = px.imshow(
+                st.session_state["risk_map"],
+                labels=dict(x="X Coordinate", y="Y Coordinate", color="Risk Level"),
+                x=np.arange(50),
+                y=np.arange(50),
+                color_continuous_scale="Reds",
+                title="Generated Flood Risk Map (0 = Safe, 1 = Extreme Risk)",
+            )
+            fig_risk.add_scatter(
+                x=[data["Hospital_Pos"][0]],
+                y=[data["Hospital_Pos"][1]],
+                mode="markers",
+                marker=dict(size=12, color="blue", symbol="cross"),
+                name="Hospital",
+            )
+            st.plotly_chart(fig_risk, use_container_width=True)
 
-    st.subheader("2. Candidate generation")
-    st.write("The prototype uses the DEM footprint as candidate space. For a full real-world version, upload building/land-parcel polygons and road data.")
+# ==========================================
+# 6. TAB 2: MISSION 2 - SITE SELECTION
+# ==========================================
+with tab2:
+    st.header("Mission 2: Select 3 Evacuation Shelter Sites")
+    st.write(
+        "Select coordinates $(X, Y)$ for 3 evacuation shelters. Ideal sites must have **Low Flood Risk**, **High Road Accessibility**, and **Proximity to Hospital**."
+    )
 
-    # Candidate cells from DEM, with flood safety based on uploaded flood raster if present.
-    cand=dem_df.copy()
-    elev_norm=(cand.value-cand.value.min())/(cand.value.max()-cand.value.min()+1e-9)
-    cand["elevation_score"]=elev_norm
-    if flood is not None:
-        from rasterio.warp import reproject, Resampling
-        aligned=np.full(dem.shape,np.nan,dtype="float32")
-        reproject(flood, aligned, src_transform=flood_src.transform, src_crs=flood_src.crs,
-                  dst_transform=dem_src.transform, dst_crs=dem_src.crs, resampling=Resampling.bilinear)
-        # map DEM sampled pixels to corresponding flood values
-        # approximate using nearest pixel lookup
-        rows,cols=rasterio.transform.rowcol(dem_src.transform,cand.lon.values,cand.lat.values)
-        rows=np.clip(rows,0,aligned.shape[0]-1); cols=np.clip(cols,0,aligned.shape[1]-1)
-        hz=aligned[rows,cols]
-        hz=np.nan_to_num(hz,nan=np.nanmedian(hz) if np.isfinite(hz).any() else 0.5)
-        hz=(hz-np.nanmin(hz))/(np.nanmax(hz)-np.nanmin(hz)+1e-9)
-        cand["flood_safety"]=1-hz
-    else:
-        cand["flood_safety"]=cand["elevation_score"]
-        st.warning("No flood-hazard raster supplied. Flood safety is temporarily represented by elevation only; upload a real hazard raster for the intended exercise.")
+    col_m21, col_m22 = st.columns([1, 2])
 
-    # Real roads/hospitals if uploaded; otherwise these criteria cannot be scored honestly.
-    cand["road_score"]=np.nan
-    cand["pop_score"]=np.nan
-    cand["hospital_score"]=np.nan
-    names=" ".join(geo_layers.keys()).lower()
-    for name,gdf in geo_layers.items():
-        low=name.lower()
-        if "road" in low or "street" in low:
-            # score by inverse distance to nearest road using centroids (coarse teaching metric)
-            pts=gdf.to_crs(dem_src.crs)
-            coords=np.array([[p.x,p.y] for p in pts.geometry.centroid])
-            # DEM CRS could be geographic; this is only a fallback. Use normalized nearest-neighbour distance.
-            if len(coords):
-                dx=cand.lon.values[:,None]-coords[:,0]
-                dy=cand.lat.values[:,None]-coords[:,1]
-                dd=np.sqrt(dx*dx+dy*dy).min(axis=1)
-                cand["road_score"]=1-(dd-dd.min())/(dd.max()-dd.min()+1e-9)
-        if "hospital" in low:
-            pts=gdf.to_crs(dem_src.crs)
-            coords=np.array([[p.x,p.y] for p in pts.geometry.centroid])
-            if len(coords):
-                dx=cand.lon.values[:,None]-coords[:,0]
-                dy=cand.lat.values[:,None]-coords[:,1]
-                dd=np.sqrt(dx*dx+dy*dy).min(axis=1)
-                cand["hospital_score"]=1-(dd-dd.min())/(dd.max()-dd.min()+1e-9)
-        if "population" in low or "building" in low or "residential" in low:
-            cand["pop_score"]=0.5 # placeholder only if actual population polygons are not supplied
+    with col_m21:
+        st.subheader("📌 Site Coordinates")
+        s1_x = st.number_input("Site 1 X", 0, 49, 10)
+        s1_y = st.number_input("Site 1 Y", 0, 49, 10)
+        st.markdown("---")
+        s2_x = st.number_input("Site 2 X", 0, 49, 25)
+        s2_y = st.number_input("Site 2 Y", 0, 49, 40)
+        st.markdown("---")
+        s3_x = st.number_input("Site 3 X", 0, 49, 40)
+        s3_y = st.number_input("Site 3 Y", 0, 49, 15)
 
-    missing=[]
-    if cand["road_score"].isna().all(): missing.append("roads")
-    if cand["pop_score"].isna().all(): missing.append("population/buildings")
-    if cand["hospital_score"].isna().all(): missing.append("hospitals")
-    if missing:
-        st.warning("Missing real layers: "+", ".join(missing)+". Their criteria are excluded from the score rather than fabricated.")
+        if st.button("Evaluate Evacuation Sites", use_container_width=True):
+            if "risk_map" not in st.session_state:
+                st.error("Please calculate the Flood Risk Map in Mission 1 first!")
+            else:
+                rm = st.session_state["risk_map"]
+                sites = [(s1_x, s1_y), (s2_x, s2_y), (s3_x, s3_y)]
+                site_scores = []
 
-    score_parts=[]
-    score_parts.append(weights[0]*cand.flood_safety)
-    score_parts.append(weights[1]*cand.elevation_score)
-    if not cand["road_score"].isna().all(): score_parts.append(weights[2]*cand.road_score.fillna(0))
-    if not cand["pop_score"].isna().all(): score_parts.append(weights[3]*cand.pop_score.fillna(0))
-    if not cand["hospital_score"].isna().all(): score_parts.append(weights[4]*cand.hospital_score.fillna(0))
-    cand["suitability"]=sum(score_parts)
+                for sx, sy in sites:
+                    risk_val = rm[sy, sx]
+                    road_acc = 1.0 - (
+                        data["Road_Dist"][sy, sx] / data["Road_Dist"].max()
+                    )
+                    hosp_prox = 1.0 - (
+                        data["Hospital_Dist"][sy, sx] / data["Hospital_Dist"].max()
+                    )
 
-    if st.button("🗺️ Find candidate sites", type="primary"):
-        top=cand.sort_values("suitability",ascending=False).head(10)
-        st.session_state["top_sites"]=top
+                    # Score per site
+                    score = (
+                        (1.0 - risk_val) * 40.0
+                        + road_acc * 30.0
+                        + hosp_prox * 30.0
+                    )
+                    site_scores.append(score)
 
-    if "top_sites" in st.session_state:
-        top=st.session_state["top_sites"]
-        fig=px.scatter(top,x="lon",y="lat",size="suitability",color="suitability",
-                       color_continuous_scale="Turbo",title="Top real-data candidate locations")
-        st.plotly_chart(fig,use_container_width=True)
-        st.dataframe(top[["lon","lat","suitability","flood_safety","elevation_score"]]
-                     .style.format("{:.3f}"),hide_index=True,use_container_width=True)
-        st.info("These are candidate locations under your chosen criteria, not a certified emergency-planning recommendation.")
+                st.session_state.m2_score = float(np.mean(site_scores))
+                st.rerun()
 
-# Auto-refresh for classroom presence
-if live_mode():
-    time.sleep(0.1)
-    st_autorefresh = getattr(st, "autorefresh", None)
-    if st_autorefresh:
-        st_autorefresh(interval=5000, key="heartbeat")
+    with col_m22:
+        st.subheader("🗺️ Selected Shelter Overlay Map")
+        if "risk_map" in st.session_state:
+            fig_sites = px.imshow(
+                st.session_state["risk_map"],
+                color_continuous_scale="Reds",
+                title="Shelter Sites vs. Flood Risk Heatmap",
+            )
+            # Add Hospital
+            fig_sites.add_scatter(
+                x=[data["Hospital_Pos"][0]],
+                y=[data["Hospital_Pos"][1]],
+                mode="markers",
+                marker=dict(size=14, color="blue", symbol="hospital"),
+                name="Hospital",
+            )
+            # Add Selected Sites
+            fig_sites.add_scatter(
+                x=[s1_x, s2_x, s3_x],
+                y=[s1_y, s2_y, s3_y],
+                mode="markers+text",
+                text=["Site 1", "Site 2", "Site 3"],
+                textposition="top center",
+                marker=dict(size=14, color="green", symbol="star"),
+                name="Evacuation Shelters",
+            )
+            st.plotly_chart(fig_sites, use_container_width=True)
+        else:
+            st.info("Complete Mission 1 first to display the overlay map.")
+
+# ==========================================
+# 7. TAB 3: REAL-TIME LLM AI ADVISOR
+# ==========================================
+with tab3:
+    st.header("🤖 Interactive GeoAI Advisor")
+    st.write(
+        "Ask questions about flood modeling, weight rationales, or spatial decision analysis."
+    )
+
+    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY", "YOUR_API_KEY"))
+
+    SYSTEM_PROMPT = """You are 'GeoAI Assistant', an expert spatial data scientist specializing in flood risk modeling and emergency disaster management.
+    You are evaluating a student's flood risk weighting model and evacuation site selection in an interactive challenge.
+    
+    Explain spatial relationships clearly using hydro-geomorphological principles (e.g., elevation, slope, runoff accumulation, proximity to rivers).
+    Respond in a concise, educational, and encouraging tone suitable for university students."""
+
+    # Display chat messages
+    for message in st.session_state.chat_history:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    if user_prompt := st.chat_input(
+        "Ask AI (e.g., 'Why did you give flood risk 30%?')"
+    ):
+        st.session_state.chat_history.append(
+            {"role": "user", "content": user_prompt}
+        )
+        with st.chat_message("user"):
+            st.markdown(user_prompt)
+
+        with st.chat_message("assistant"):
+            try:
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        *st.session_state.chat_history,
+                    ],
+                )
+                ai_reply = response.choices[0].message.content
+            except Exception as e:
+                ai_reply = f"*(AI Mode Simulation - OpenAI Key required for full API integration)*\n\n**GeoAI Explanation:** Flood risk factors like **Elevation** and **Slope** carry heavy weights (25% and 15%) because water naturally flows to lower elevations and flat areas where surface runoff accumulates. **Proximity to River** (20%) directly reflects exposure to riverine flooding during heavy rainstorms."
+
+            st.markdown(ai_reply)
+            st.session_state.chat_history.append(
+                {"role": "assistant", "content": ai_reply}
+            )
+            
