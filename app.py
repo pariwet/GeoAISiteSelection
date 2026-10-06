@@ -51,6 +51,16 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+import streamlit as st
+
+# Initialize a key if it doesn't exist yet
+if "my_key" not in st.session_state:
+    st.session_state.my_key = "initial_value"
+
+# Access or modify it
+st.session_state.my_key = "new_value"
+st.write(st.session_state["my_key"])
+
 # Initialize Session State
 if "team_name" not in st.session_state:
     st.session_state.team_name = "Team Explorer"
