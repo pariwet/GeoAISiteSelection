@@ -4,7 +4,6 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import pydeck as pdk
 import streamlit as st
 from openai import OpenAI
 
@@ -51,25 +50,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-import torch
-import streamlit as st
-
-# Save a PyTorch model state_dict
-torch.save(model.state_dict(), "model.pt")
-
-# Load state_dict into a PyTorch model
-model.load_state_dict(torch.load("model.pt"))
-
-
-# Initialize a key if it doesn't exist yet
-if "my_key" not in st.session_state:
-    st.session_state.my_key = "initial_value"
-
-# Access or modify it
-st.session_state.my_key = "new_value"
-st.write(st.session_state["my_key"])
-
-# Initialize Session State
+# Initialize Session State Variables
 if "team_name" not in st.session_state:
     st.session_state.team_name = "Team Explorer"
 if "m1_score" not in st.session_state:
@@ -256,7 +237,7 @@ with tab1:
             st.success("✅ Total Weight: **100%**")
 
         if st.button("🚀 Calculate Flood Risk Map", use_container_width=True):
-            # Calculate Risk Matrix Normalized 0..1
+            # Normalize Factors (0..1)
             norm_elev = 1 - (
                 data["Elevation"] - data["Elevation"].min()
             ) / (data["Elevation"].max() - data["Elevation"].min())
@@ -277,6 +258,7 @@ with tab1:
                 data["Hospital_Dist"].max() - data["Hospital_Dist"].min()
             )
 
+            # Calculate Weighted Risk Map
             risk_map = (
                 w_elev * norm_elev
                 + w_slope * norm_slope
@@ -289,7 +271,7 @@ with tab1:
 
             st.session_state["risk_map"] = risk_map
 
-            # Calculate M1 Score
+            # Calculate Mission 1 Score
             user_w = {
                 "Elevation": w_elev,
                 "Slope": w_slope,
@@ -384,7 +366,7 @@ with tab2:
                         data["Hospital_Dist"][sy, sx] / data["Hospital_Dist"].max()
                     )
 
-                    # Score per site
+                    # Score per site calculation
                     score = (
                         (1.0 - risk_val) * 40.0
                         + road_acc * 30.0
@@ -408,7 +390,7 @@ with tab2:
                 x=[data["Hospital_Pos"][0]],
                 y=[data["Hospital_Pos"][1]],
                 mode="markers",
-                marker=dict(size=14, color="blue", symbol="hospital"),
+                marker=dict(size=14, color="blue", symbol="cross"),
                 name="Hospital",
             )
             # Add Selected Sites
@@ -473,4 +455,3 @@ with tab3:
             st.session_state.chat_history.append(
                 {"role": "assistant", "content": ai_reply}
             )
-            
