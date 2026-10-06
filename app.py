@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from typing import Any
 
@@ -124,10 +125,39 @@ def cell_label(r: int, c: int) -> str:
     return f"Cell {chr(65+r)}{c+1}"
 
 
-def heatmap(title: str, z: np.ndarray, colorscale: str = "Turbo", selected: list[tuple[int,int]] | None = None) -> go.Figure:
+def parse_cell_names(raw: str) -> tuple[list[tuple[int, int]], list[str]]:
+    """Parse learner input such as 'A1, B2, C5' into grid coordinates."""
+    cells: list[tuple[int, int]] = []
+    invalid: list[str] = []
+    for token in raw.split(","):
+        token = token.strip().upper().replace("CELL ", "")
+        if not token:
+            continue
+        match = re.fullmatch(r"([A-L])(1[0-2]|[1-9])", token)
+        if not match:
+            invalid.append(token)
+            continue
+        cell = (ord(match.group(1)) - 65, int(match.group(2)) - 1)
+        if cell not in cells:
+            cells.append(cell)
+    if len(cells) > 5:
+        invalid.extend([cell_label(r, c) for r, c in cells[5:]])
+        cells = cells[:5]
+    return cells, invalid
+
+
+def heatmap(title: str, z: np.ndarray, colorscale: str = "Turbo", selected: list[tuple[int,int]] | None = None, selectable: bool = False) -> go.Figure:
     fig = go.Figure(go.Heatmap(z=z, colorscale=colorscale, zmin=0, zmax=1, x=[str(i+1) for i in range(z.shape[1])], y=[chr(65+i) for i in range(z.shape[0])], hovertemplate="Cell %{y}%{x}<br>Normalized value: %{z:.2f}<extra></extra>"))
+    if selectable:
+        # Transparent point layer makes individual heatmap cells selectable in Streamlit.
+        # The visible heatmap remains the teaching visualization underneath.
+        xs, ys = [], []
+        for row in range(z.shape[0]):
+            for col in range(z.shape[1]):
+                xs.append(str(col + 1)); ys.append(chr(65 + row))
+        fig.add_trace(go.Scatter(x=xs, y=ys, mode="markers", marker=dict(size=27, color="rgba(255,255,255,0.02)"), showlegend=False, hoverinfo="skip", selectedpoints=[]))
     for r,c in selected or []:
-        fig.add_trace(go.Scatter(x=[str(c+1)], y=[chr(65+r)], mode="markers", marker=dict(size=22, color="#c9f56a", symbol="circle-open", line=dict(width=3)), showlegend=False, hoverinfo="skip"))
+        fig.add_trace(go.Scatter(x=[str(c+1)], y=[chr(65+r)], mode="markers", marker=dict(size=22, color="#ff4fa3", symbol="circle-open", line=dict(width=3, color="#ffd1e7")), showlegend=False, hoverinfo="skip"))
     fig.update_layout(title=title, height=330, margin=dict(l=8,r=8,t=42,b=8), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#ecf4ff"), xaxis_title="Column", yaxis_title="Row")
     return fig
 
@@ -231,29 +261,23 @@ if st.session_state.nav == "Challenge":
         st.info("Mission 2 will activate inside the generated flood-risk map after Mission 1 is submitted.")
     else:
         st.markdown("### Flood-risk map · generated from your weights")
-        st.markdown("<p class='subtle'>Click cells directly on this map to make your answer. Select 2–5 sites, then submit.</p>", unsafe_allow_html=True)
-        try:
-            click_event = st.plotly_chart(heatmap("Click a cell to select an evacuation site", risk, "RdYlGn_r", st.session_state.selected_sites), use_container_width=True, on_select="rerun", selection_mode="points", key="risk_map_mission2")
-            if click_event and click_event.selection and click_event.selection.points:
-                point = click_event.selection.points[0]
-                cr, cc = ord(str(point.get("y", "A"))[0])-65, int(point.get("x", 1))-1
-                if 0 <= cr < 12 and 0 <= cc < 12 and (cr,cc) not in st.session_state.selected_sites and len(st.session_state.selected_sites) < 5:
-                    st.session_state.selected_sites.append((cr,cc)); st.rerun()
-        except TypeError:
-            st.plotly_chart(heatmap("Click a cell to select an evacuation site", risk, "RdYlGn_r", st.session_state.selected_sites), use_container_width=True)
-        score2, metrics = mission2_score(st.session_state.selected_sites, risk)
-        selected_text = ", ".join(cell_label(r,c) for r,c in st.session_state.selected_sites)
-        cell_col, submit_col = st.columns([2.2, 1])
-        with cell_col:
-            st.text_input("Selected cell number(s)", value=selected_text or "Click a cell on the map", disabled=True, key="selected_cell_display")
-        with submit_col:
+        st.markdown("<p class='subtle'>Use the map as a reference. Enter 2–5 cell names separated by commas, apply them, then submit.</p>", unsafe_allow_html=True)
+        # Keep the map as a visual reference; cell selection is explicit text input.
+        st.plotly_chart(heatmap("Flood-risk map reference", risk, "RdYlGn_r", st.session_state.selected_sites), use_container_width=True, key="risk_map_mission2")
+        st.caption("Enter cell names exactly as shown on the grid. Separate multiple cells with commas, for example: A1, B2, C5.")
+        input_col, apply_col = st.columns([2.4, 1])
+        with input_col:
+            cell_input = st.text_input("Evacuation cell(s)", key="mission2_cell_input", placeholder="A1, B2, C5")
+        with apply_col:
             st.write("")
-            if st.button("Submit", type="primary", use_container_width=True, disabled=not (2 <= len(st.session_state.selected_sites) <= 5), key="submit_cells_top"):
-                st.session_state.mission2_score = score2
-                current_team = st.session_state.get("team_name", "").strip()
-                if current_team in st.session_state.team_scores:
-                    st.session_state.team_scores[current_team]["Mission 2"] = st.session_state.mission2_score
-                st.toast("Evacuation sites submitted!")
+            if st.button("Apply cells", use_container_width=True, key="apply_cells"):
+                parsed_cells, invalid_cells = parse_cell_names(cell_input)
+                st.session_state.selected_sites = parsed_cells
+                if invalid_cells:
+                    st.warning("Invalid cell name(s): " + ", ".join(invalid_cells))
+                else:
+                    st.toast("Cell selection applied")
+        score2, metrics = mission2_score(st.session_state.selected_sites, risk)
         m1,m2,m3 = st.columns(3)
         m1.metric("Mission 2 score", f"{score2}/100")
         m2.metric("Safety", f"{metrics['safety']:.0%}")
@@ -263,7 +287,12 @@ if st.session_state.nav == "Challenge":
             if st.button("Clear selected cells"):
                 st.session_state.selected_sites = []; st.rerun()
         with cb:
-            st.caption("Use the Submit button beside the selected cell number above.")
+            if st.button("Submit", type="primary", use_container_width=True, disabled=not (2 <= len(st.session_state.selected_sites) <= 5), key="submit_cells_top"):
+                st.session_state.mission2_score = score2
+                current_team = st.session_state.get("team_name", "").strip()
+                if current_team in st.session_state.team_scores:
+                    st.session_state.team_scores[current_team]["Mission 2"] = st.session_state.mission2_score
+                st.toast("Evacuation sites submitted!")
 
     if st.session_state.teams:
         st.markdown("### Live Team Board")
