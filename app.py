@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import re
+import sqlite3
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -51,8 +53,73 @@ FACTORS = ["Slope", "Elevation", "Rainfall", "Distance to river", "Drainage capa
 DEFAULT_WEIGHTS = {factor: 0 for factor in FACTORS}
 BENCHMARK_WEIGHTS = {"Slope": 18, "Elevation": 24, "Rainfall": 28, "Distance to river": 18, "Drainage capacity": 12}
 
+DB_PATH = os.getenv("SITE_SELECTION_DB_PATH", str(Path(__file__).with_name("site_selection.sqlite3")))
+
+
+def db_connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, timeout=10, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=10000")
+    return conn
+
+
+def init_db() -> None:
+    with db_connect() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS teams (
+                team_name TEXT PRIMARY KEY,
+                mission1_score INTEGER NOT NULL DEFAULT 0,
+                mission2_score INTEGER NOT NULL DEFAULT 0,
+                joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+
+def db_join_team(team_name: str) -> bool:
+    with db_connect() as conn:
+        cursor = conn.execute(
+            "INSERT OR IGNORE INTO teams(team_name) VALUES (?)", (team_name,)
+        )
+        return cursor.rowcount == 1
+
+
+def db_update_team_score(team_name: str, mission1: int | None = None, mission2: int | None = None) -> None:
+    if not team_name:
+        return
+    fields, values = [], []
+    if mission1 is not None:
+        fields.extend(["mission1_score = ?"]); values.append(int(mission1))
+    if mission2 is not None:
+        fields.extend(["mission2_score = ?"]); values.append(int(mission2))
+    if not fields:
+        return
+    fields.append("updated_at = CURRENT_TIMESTAMP")
+    values.append(team_name)
+    with db_connect() as conn:
+        conn.execute(f"UPDATE teams SET {', '.join(fields)} WHERE team_name = ?", values)
+
+
+def db_load_teams() -> tuple[list[str], dict[str, dict[str, int]]]:
+    with db_connect() as conn:
+        rows = conn.execute("SELECT team_name, mission1_score, mission2_score FROM teams ORDER BY team_name").fetchall()
+    teams = [row["team_name"] for row in rows]
+    scores = {
+        row["team_name"]: {"Mission 1": int(row["mission1_score"]), "Mission 2": int(row["mission2_score"])}
+        for row in rows
+    }
+    return teams, scores
+
+
+def sync_shared_teams() -> None:
+    teams, scores = db_load_teams()
+    st.session_state.teams = teams
+    st.session_state.team_scores = scores
+
 
 def init_state() -> None:
+    init_db()
     defaults: dict[str, Any] = {
         "weights": DEFAULT_WEIGHTS.copy(),
         "mission1_score": 0,
@@ -179,6 +246,7 @@ def advisor_prompt() -> str:
 
 
 init_state()
+sync_shared_teams()
 if st.session_state.nav not in {"Challenge", "Facilitator guide"}:
     st.session_state.nav = "Challenge"
 if st_autorefresh:
@@ -195,14 +263,15 @@ mm, ss = divmod(remaining, 60)
 st.sidebar.text_input("Team name", key="team_name", placeholder="Enter your team")
 if st.sidebar.button("Join", use_container_width=True):
     name = st.session_state.get("team_name", "").strip()
-    if name and name not in st.session_state.teams:
-        st.session_state.teams.append(name)
-        st.session_state.team_scores[name] = {"Mission 1": 0, "Mission 2": 0}
-        st.sidebar.success(f"{name} joined")
+    if name:
+        is_new = db_join_team(name)
+        sync_shared_teams()
+        st.sidebar.success(f"{name} {'joined' if is_new else 'is already on'} the shared board")
 st.sidebar.metric("Time remaining", f"{mm:02d}:{ss:02d}")
+shared_current_scores = st.session_state.team_scores.get(st.session_state.get("team_name", "").strip(), {"Mission 1": 0, "Mission 2": 0})
 a,b = st.sidebar.columns(2)
-a.metric("Mission 1", f"{st.session_state.mission1_score}/100")
-b.metric("Mission 2", f"{st.session_state.mission2_score}/100")
+a.metric("Mission 1", f"{shared_current_scores['Mission 1']}/100")
+b.metric("Mission 2", f"{shared_current_scores['Mission 2']}/100")
 st.sidebar.markdown("**TOP 3 TEAMS**")
 if st.session_state.teams:
     rows = []
@@ -217,13 +286,14 @@ else:
 
 if st.session_state.nav == "Challenge":
     st.markdown("<div class='kicker'>ROUND 01 // URBAN RESILIENCE</div>", unsafe_allow_html=True)
-    st.markdown("<div class='hero'>Choose the safest place.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='hero'>Choose the safest future<br>for Riverside District.</div>", unsafe_allow_html=True)
     st.markdown("<p class='subtle'>Build the evidence. Generate the map. Then place evacuation sites.</p>", unsafe_allow_html=True)
     top = st.columns([1.25,1,1])
     with top[0]:
         st.markdown("<div class='challenge-card'><span class='badge'>LIVE CHALLENGE</span><h3>Flood resilience sprint</h3><p class='subtle'>Two connected missions. Every choice must be explainable.</p><div class='score-pill'>200 pts available</div></div>", unsafe_allow_html=True)
     with top[1]: st.metric("Teams on board", len(st.session_state.teams), "Join in left panel")
-    with top[2]: st.metric("Your total", st.session_state.mission1_score + st.session_state.mission2_score, "of 200")
+    current_team_scores = st.session_state.team_scores.get(st.session_state.get("team_name", "").strip(), {"Mission 1": 0, "Mission 2": 0})
+    with top[2]: st.metric("Your total", current_team_scores["Mission 1"] + current_team_scores["Mission 2"], "of 200")
 
     st.divider()
     st.markdown("<div class='kicker'>MISSION 1 // FACTOR WEIGHTING</div>", unsafe_allow_html=True)
@@ -239,8 +309,8 @@ if st.session_state.nav == "Challenge":
             st.session_state.map_generated = True
             st.session_state.mission1_score = mission1_score(st.session_state.weights)[0]
             current_team = st.session_state.get("team_name", "").strip()
-            if current_team in st.session_state.team_scores:
-                st.session_state.team_scores[current_team]["Mission 1"] = st.session_state.mission1_score
+            db_update_team_score(current_team, mission1=st.session_state.mission1_score)
+            sync_shared_teams()
             st.toast("Flood-risk map generated. Mission 2 is ready below.")
     with right:
         st.markdown("### Factor maps · 2D evidence layers")
@@ -290,8 +360,8 @@ if st.session_state.nav == "Challenge":
             if st.button("Submit", type="primary", use_container_width=True, disabled=not (2 <= len(st.session_state.selected_sites) <= 5), key="submit_cells_top"):
                 st.session_state.mission2_score = score2
                 current_team = st.session_state.get("team_name", "").strip()
-                if current_team in st.session_state.team_scores:
-                    st.session_state.team_scores[current_team]["Mission 2"] = st.session_state.mission2_score
+                db_update_team_score(current_team, mission2=st.session_state.mission2_score)
+                sync_shared_teams()
                 st.toast("Evacuation sites submitted!")
 
     if st.session_state.teams:
